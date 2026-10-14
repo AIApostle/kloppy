@@ -1,7 +1,7 @@
 """Strands-backed agent orchestration boundary."""
 
-import re
 import json
+import re
 from typing import Protocol
 
 from strands import Agent
