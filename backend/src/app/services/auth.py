@@ -43,10 +43,14 @@ class SupabaseAuthService:
     def from_settings(cls) -> "SupabaseAuthService":
         if not settings.supabase_url or not settings.supabase_publishable_key:
             raise AuthConfigurationError(
-                "Supabase Auth is not configured. Set SUPABASE_URL and "
-                "SUPABASE_PUBLISHABLE_KEY."
+                "Supabase Auth is not configured. Set SUPABASE_PROJECT_URL and "
+                "SUPABASE_ANON_KEY."
             )
-        return cls(create_client(settings.supabase_url, settings.supabase_publishable_key))
+        try:
+            client = create_client(settings.supabase_url, settings.supabase_publishable_key)
+        except Exception as error:
+            raise AuthConfigurationError("Supabase Auth could not be initialized.") from error
+        return cls(client)
 
     def signup(self, email: str, password: str, name: str | None) -> AuthSession:
         try:

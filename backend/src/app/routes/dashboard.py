@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from ..data import dashboard_payload
-from ..schemas import DashboardResponse
+from ..schemas.dashboard import DashboardResponse
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 

@@ -2,7 +2,9 @@
 
 import uvicorn
 
-from src.app.application import app
+from src.app.application import app as application
+
+app = application
 
 
 def main() -> None:

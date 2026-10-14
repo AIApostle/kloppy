@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from ..data import PROFILE
-from ..schemas import ProfileUpdate
+from ..schemas.settings import ProfileUpdate
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 

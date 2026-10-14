@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routes import assistant, auth, dashboard, integrations, settings as settings_routes
+from .routes import assistant, dashboard, integrations, settings as settings_routes
+from .routes.auth import router as auth_router
 
 
 def create_app() -> FastAPI:
@@ -17,7 +18,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     for router in (
-        auth.router,
+        auth_router,
         dashboard.router,
         integrations.router,
         settings_routes.router,

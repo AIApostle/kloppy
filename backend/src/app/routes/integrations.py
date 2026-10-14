@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from ..data import INTEGRATIONS
-from ..schemas import Integration, IntegrationUpdate
+from ..schemas.integrations import Integration, IntegrationUpdate
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 

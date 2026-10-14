@@ -21,8 +21,9 @@
 
 - Keep `backend/main.py` as the Uvicorn entry point.
 - Keep related code together: routes in `src/app/routes/`, integrations in
-  `src/app/services/`, schemas in `src/app/schemas.py`, and configuration in
-  `src/app/config.py`.
+  `src/app/services/`, domain-specific schemas in `src/app/schemas/`, and
+  configuration in `src/app/config.py`. Authentication endpoints belong in
+  `src/app/routes/auth/`; do not grow a monolithic routes or schemas module.
 - Route handlers validate and translate HTTP concerns. Services own provider
   calls and domain behavior. Do not put Supabase, Qloo, Strands, or MCP calls
   directly in route handlers.
