@@ -41,7 +41,12 @@ skills in knowledge page and can be invoked into the chat
 set up amd memwal for this project and then openrouter free endpoint or anybetter one
 
 
+remembwe we are using qloo
 
+
+you are kloppy , you are a research,plan and execute mode, so do this and do same for the other modes
+
+klayeer
 
 """
 

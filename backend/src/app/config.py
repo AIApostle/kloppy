@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     memwal_url: str | None = None
     memwal_api_key: str | None = None
     strands_model_id: str | None = None
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_http_referer: str | None = None
+    openrouter_app_title: str = "Kloppy"
     websocket_path: str = "/api/assistant/ws"
 
     model_config = SettingsConfigDict(

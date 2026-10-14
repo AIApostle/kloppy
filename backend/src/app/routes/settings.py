@@ -1,19 +1,39 @@
-"""Workspace settings routes."""
+"""Authenticated workspace settings routes."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 
-from ..data import PROFILE
 from ..schemas.settings import ProfileUpdate
+from ..services.user_settings import (
+    SettingsStoreError,
+    read_user_settings,
+    save_user_settings,
+)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
+def _token(authorization: str | None) -> str:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return authorization[7:].strip()
+
+
 @router.get("")
-def get_settings() -> dict:
-    return PROFILE.copy()
+def get_settings(authorization: str | None = Header(default=None)) -> dict:
+    try:
+        return read_user_settings(_token(authorization))
+    except SettingsStoreError as error:
+        status = 401 if "Authentication" in str(error) else 503
+        raise HTTPException(status_code=status, detail=str(error)) from error
 
 
 @router.put("")
-def update_settings(payload: ProfileUpdate) -> dict:
-    PROFILE.update(payload.model_dump())
-    return PROFILE.copy()
+def update_settings(
+    payload: ProfileUpdate,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    try:
+        return save_user_settings(_token(authorization), payload)
+    except SettingsStoreError as error:
+        status = 401 if "Authentication" in str(error) else 503
+        raise HTTPException(status_code=status, detail=str(error)) from error

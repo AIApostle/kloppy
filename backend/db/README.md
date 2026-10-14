@@ -20,4 +20,8 @@ The schema is tenant-first:
 
 The first migration creates the core campaign, conversation, knowledge,
 integration, execution, and audit records needed by the current product. It
-does not create fake users or seed demo tenant data.
+does not create fake users or seed demo tenant data. `003_user_settings.sql`
+stores each authenticated user's editable profile and approval preference;
+RLS scopes every read and write to `auth.uid()`. The application verifies the
+Supabase access token and reads this row before processing chat, including
+every Execute-mode turn.

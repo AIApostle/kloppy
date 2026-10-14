@@ -1,9 +1,10 @@
 import { type ChangeEvent, type FormEvent, type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 import './App.css'
 
-type Page = 'chat' | 'campaigns' | 'knowledge' | 'integrations' | 'settings' | 'campaign-chat' | 'overview' | 'audience' | 'strategy' | 'creative' | 'launch'
+type Page = 'chat' | 'campaigns' | 'knowledge' | 'integrations' | 'settings' | 'campaign-chat' | 'overview' | 'audience' | 'strategy' | 'launch'
 type AuthMode = 'login' | 'signup'
-type IconName = 'activity' | 'arrow' | 'brief' | 'campaigns' | 'chevron' | 'creative' | 'dots' | 'insights' | 'plus' | 'search' | 'settings' | 'spark' | 'strategy' | 'trend' | 'send' | 'lock' | 'check' | 'play' | 'book' | 'collapse' | 'external' | 'plug' | 'file'
+type UserSettings = { name: string; workspace: string; digest_enabled: boolean; permission_policy: 'ask' | 'auto' }
+type IconName = 'activity' | 'arrow' | 'brief' | 'campaigns' | 'chevron' | 'creative' | 'dots' | 'insights' | 'plus' | 'search' | 'settings' | 'spark' | 'strategy' | 'trend' | 'send' | 'lock' | 'check' | 'play' | 'book' | 'collapse' | 'external' | 'plug' | 'file' | 'eye' | 'eyeOff' | 'logout'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api'
 
@@ -20,7 +21,6 @@ const campaignNav: { label: string; page: Page; icon: IconName }[] = [
   { label: 'Overview', page: 'overview', icon: 'activity' },
   { label: 'Audience', page: 'audience', icon: 'insights' },
   { label: 'Strategy', page: 'strategy', icon: 'strategy' },
-  { label: 'Creative studio', page: 'creative', icon: 'creative' },
   { label: 'Launch & learn', page: 'launch', icon: 'trend' },
 ]
 
@@ -80,12 +80,19 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     external: <><path d="M14 5h5v5M19 5l-8 8" /><path d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></>,
     plug: <><path d="M8 12V5M16 12V5M5 9h14M12 9v5a4 4 0 0 1-8 0M12 14a4 4 0 0 0 8 0V9" /></>,
     file: <><path d="M6 3.5h8l4 4V20.5H6z" /><path d="M14 3.5v4h4M9 12h6M9 16h4" /></>,
+    eye: <><path d="M2.5 12s3.2-6 9.5-6 9.5 6 9.5 6-3.2 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></>,
+    eyeOff: <><path d="m3 3 18 18M10.6 6.2A10.8 10.8 0 0 1 12 6c6.3 0 9.5 6 9.5 6a15.6 15.6 0 0 1-3 3.6M6.2 6.2C3.8 7.7 2.5 12 2.5 12s3.2 6 9.5 6c.8 0 1.6-.1 2.3-.3" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
+    logout: <><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>,
   }
   return <svg {...common}>{paths[name]}</svg>
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options })
+  const token = localStorage.getItem('kloppy-session')
+  const headers = new Headers(options?.headers)
+  headers.set('Content-Type', 'application/json')
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers })
   if (!response.ok) throw new Error((await response.json()).detail ?? 'Request failed')
   return response.json()
 }
@@ -96,6 +103,75 @@ function Brand() {
 
 function KloppyMark({ size = 'small' }: { size?: 'small' | 'large' }) {
   return <span className={`kloppy-mark ${size}`} aria-label="Kloppy"><span className="brand-k">k</span></span>
+}
+
+function formatInline(text: string): ReactNode[] {
+  const normalized = text.replace(/\\([*_~`#[\]])/g, '$1')
+  const tokens = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g
+  return normalized.split(tokens).filter(Boolean).map((part, index) => {
+    if (part.startsWith('**') || part.startsWith('__')) return <strong key={index}>{part.slice(2, -2)}</strong>
+    if (part.startsWith('~~')) return <del key={index}>{part.slice(2, -2)}</del>
+    if (part.startsWith('*')) return <em key={index}>{part.slice(1, -1)}</em>
+    if (part.startsWith('`')) return <code key={index}>{part.slice(1, -1)}</code>
+    const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/)
+    if (link) return <a key={index} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>
+    return part
+  })
+}
+
+function FormattedText({ text }: { text: string }) {
+  const blocks: ReactNode[] = []
+  const paragraph: string[] = []
+  const lines = text.replace(/\\([*_~`#[\]])/g, '$1').split(/\r?\n/)
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    blocks.push(<p key={`p-${blocks.length}`}>{formatInline(paragraph.join(' '))}</p>)
+    paragraph.length = 0
+  }
+
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index]
+    if (!line.trim()) { flushParagraph(); index += 1; continue }
+
+    const heading = line.match(/^\s{0,3}(#{1,3})\s+(.+)$/)
+    if (heading) {
+      flushParagraph()
+      const Tag = `h${heading[1].length + 1}` as 'h2' | 'h3' | 'h4'
+      blocks.push(<Tag key={`h-${index}`}>{formatInline(heading[2].replace(/\s+#+\s*$/, ''))}</Tag>)
+      index += 1
+      continue
+    }
+
+    const listItem = line.match(/^\s*(?:[-*+]\s+|\d+[.)]\s+)(.+)$/)
+    if (listItem) {
+      flushParagraph()
+      const ordered = /^\s*\d+[.)]\s+/.test(line)
+      const items: string[] = []
+      while (index < lines.length) {
+        const match = lines[index].match(/^\s*(?:[-*+]\s+|\d+[.)]\s+)(.+)$/)
+        if (!match || /^\s*\d+[.)]\s+/.test(lines[index]) !== ordered) break
+        items.push(match[1]); index += 1
+      }
+      const List = ordered ? 'ol' : 'ul'
+      blocks.push(<List key={`list-${index}`}>{items.map((item, itemIndex) => <li key={itemIndex}>{formatInline(item)}</li>)}</List>)
+      continue
+    }
+
+    if (/^\s*```/.test(line)) {
+      flushParagraph()
+      const code: string[] = []
+      index += 1
+      while (index < lines.length && !/^\s*```/.test(lines[index])) code.push(lines[index++])
+      if (index < lines.length) index += 1
+      blocks.push(<pre key={`code-${index}`}><code>{code.join('\n')}</code></pre>)
+      continue
+    }
+
+    paragraph.push(line.trim())
+    index += 1
+  }
+  flushParagraph()
+  return <div className="formatted-text">{blocks}</div>
 }
 
 function Landing({ onAuth }: { onAuth: (mode: AuthMode) => void }) {
@@ -119,14 +195,14 @@ function Landing({ onAuth }: { onAuth: (mode: AuthMode) => void }) {
 }
 
 function Auth({ mode, onMode, onComplete }: { mode: AuthMode; onMode: (mode: AuthMode) => void; onComplete: (user: { name: string }) => void }) {
-  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(''); const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
-  const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(''); try { const data = await request<{ token: string | null; message?: string | null; user: { name: string; email?: string | null } }>(`/auth/${mode === 'login' ? 'login' : 'signup'}`, { method: 'POST', body: JSON.stringify({ email, password, name: mode === 'signup' ? name : undefined }) }); if (!data.token) { setError(data.message ?? 'Check your email to finish creating your account.'); return } localStorage.setItem('kloppy-session', data.token); onComplete({ name: data.user.name }) } catch (err) { setError(err instanceof Error ? err.message : 'Unable to continue. Try again.') } finally { setBusy(false) } }
-  return <div className="auth-page"><div className="auth-aside"><Brand /><div><span className="eyebrow">The campaign co-pilot</span><h1>Good marketing starts with a better read.</h1><p>Bring the brief. Kloppy will help you find the signal, make the decision, and turn it into work.</p></div><span className="auth-foot">Evidence-aware by design.</span></div><div className="auth-card-wrap"><div className="auth-card"><div className="auth-heading"><span className="eyebrow">{mode === 'login' ? 'Welcome back' : 'Start with the brief'}</span><h2>{mode === 'login' ? 'Sign in to your Kloppy account.' : 'Create your Kloppy account.'}</h2><p>{mode === 'login' ? 'Pick up where your next best move is waiting.' : 'Your campaign context stays connected from insight to action.'}</p></div><form onSubmit={submit}>{mode === 'signup' && <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Amara K." required /></label>}<label>Work email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required /></label><label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="8 characters minimum" minLength={8} required /></label>{error && <p className="form-error">{error}</p>}<button className="button primary full" disabled={busy}>{busy ? 'Opening Kloppy…' : mode === 'login' ? 'Open Kloppy' : 'Create account'} <Icon name="arrow" size={16} /></button></form><div className="auth-switch">{mode === 'login' ? 'New to Kloppy?' : 'Already have an account?'} <button onClick={() => onMode(mode === 'login' ? 'signup' : 'login')}>{mode === 'login' ? 'Create one' : 'Sign in'}</button></div><p className="secure-note"><Icon name="lock" size={13} /> Your account is private by default.</p></div></div></div>
+  const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [name, setName] = useState(''); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [showPassword, setShowPassword] = useState(false); const [busy, setBusy] = useState(false)
+  const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(''); setNotice(''); try { const data = await request<{ token: string | null; message?: string | null; user: { name: string; email?: string | null } }>(`/auth/${mode === 'login' ? 'login' : 'signup'}`, { method: 'POST', body: JSON.stringify({ email, password, name: mode === 'signup' ? name : undefined }) }); if (mode === 'signup') { setPassword(''); setNotice(data.token ? 'Your account is ready. Sign in with your email and password.' : data.message ?? 'Your account was created. Check your email to complete signup.'); onMode('login'); return } if (!data.token) { setNotice(data.message ?? 'Sign in to continue.'); return } localStorage.setItem('kloppy-session', data.token); onComplete({ name: data.user.name }) } catch (err) { setError(err instanceof Error ? err.message : 'Unable to continue. Try again.') } finally { setBusy(false) } }
+  return <div className="auth-page"><div className="auth-aside"><Brand /><div><span className="eyebrow">The campaign co-pilot</span><h1>Good marketing starts with a better read.</h1><p>Bring the brief. Kloppy will help you find the signal, make the decision, and turn it into work.</p></div><span className="auth-foot">Evidence-aware by design.</span></div><div className="auth-card-wrap"><div className="auth-card"><div className="auth-heading"><span className="eyebrow">{mode === 'login' ? 'Welcome back' : 'Start with the brief'}</span><h2>{mode === 'login' ? 'Sign in to your Kloppy account.' : 'Create your Kloppy account.'}</h2><p>{mode === 'login' ? 'Pick up where your next best move is waiting.' : 'Your campaign context stays connected from insight to action.'}</p></div><form onSubmit={submit}>{mode === 'signup' && <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="Amara K." required /></label>}<label>Work email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" required /></label><label>Password<span className="password-input"><input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="8 characters minimum" minLength={8} required /><button type="button" className="password-visibility" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}><Icon name={showPassword ? 'eyeOff' : 'eye'} size={17} /></button></span></label>{error && <p className="form-error" role="alert">{error}</p>}{notice && <p className="form-notice" role="status">{notice}</p>}<button className="button primary full" disabled={busy}>{busy ? 'Opening Kloppy…' : mode === 'login' ? 'Open Kloppy' : 'Create account'} <Icon name="arrow" size={16} /></button></form><div className="auth-switch">{mode === 'login' ? 'New to Kloppy?' : 'Already have an account?'} <button onClick={() => onMode(mode === 'login' ? 'signup' : 'login')}>{mode === 'login' ? 'Create one' : 'Sign in'}</button></div><p className="secure-note"><Icon name="lock" size={13} /> Your account is private by default.</p></div></div></div>
 }
 
-function Sidebar({ page, setPage, user }: { page: Page; setPage: (page: Page) => void; user: { name: string } }) {
+function Sidebar({ page, setPage, user, onLogout }: { page: Page; setPage: (page: Page) => void; user: { name: string }; onLogout: () => void }) {
   const [collapsed, setCollapsed] = useState(false)
-  return <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}><div className="sidebar-top"><Brand /><button className="sidebar-toggle" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(!collapsed)}><Icon name="collapse" size={17} /></button></div><nav className="main-nav" aria-label="Main navigation">{navItems.filter((item) => item.page !== 'settings').map((item) => <button title={collapsed ? item.label : undefined} aria-label={item.label} className={`nav-item ${page === item.page ? 'active' : ''}`} key={item.page} onClick={() => setPage(item.page)}>{item.page === 'chat' ? <KloppyMark /> : <Icon name={item.icon} />}<span>{item.label}</span></button>)}</nav><div className="sidebar-bottom"><button className={`nav-item settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => setPage('settings')}><Icon name="settings" /><span>Settings</span></button><div className="user-profile"><div className="user-avatar">{user.name.slice(0, 2).toUpperCase()}</div><div><strong>{user.name}</strong><span>Account owner</span></div><Icon name="dots" size={16} /></div></div></aside>
+  return <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}><div className="sidebar-top"><Brand /><button className="sidebar-toggle" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(!collapsed)}><Icon name="collapse" size={17} /></button></div><nav className="main-nav" aria-label="Main navigation">{navItems.filter((item) => item.page !== 'settings').map((item) => <button title={collapsed ? item.label : undefined} aria-label={item.label} className={`nav-item ${page === item.page ? 'active' : ''}`} key={item.page} onClick={() => setPage(item.page)}>{item.page === 'chat' ? <KloppyMark /> : <Icon name={item.icon} />}<span>{item.label}</span></button>)}</nav><div className="sidebar-bottom"><button className={`nav-item settings-nav ${page === 'settings' ? 'active' : ''}`} onClick={() => setPage('settings')}><Icon name="settings" /><span>Settings</span></button><div className="user-profile"><div className="user-avatar">{user.name.slice(0, 2).toUpperCase()}</div><div><strong>{user.name}</strong><span>Account owner</span></div><button className="logout-button" type="button" title="Log out" aria-label="Log out" onClick={onLogout}><Icon name="logout" size={16} /><span>Log out</span></button></div></div></aside>
 }
 
 type ChatMode = 'research' | 'plan' | 'execute'
@@ -146,11 +222,20 @@ const modeCopy: Record<ChatMode, { label: string; description: string }> = {
   execute: { label: 'Execute', description: 'Research, plan, and carry out approved work.' },
 }
 
-function Assistant({ fullPage = false }: { fullPage?: boolean }) {
+function Assistant({ fullPage = false, campaign = false, onConversationStart }: { fullPage?: boolean; campaign?: boolean; onConversationStart?: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: 'agent', text: 'I’m ready. Tell me what you’re trying to make true, and I’ll help shape the next move.' }])
   const [input, setInput] = useState(''); const [busy, setBusy] = useState(false); const [mode, setMode] = useState<ChatMode>('plan'); const [model, setModel] = useState(models[0].id); const [permission, setPermission] = useState<PermissionPolicy>('ask')
+  const [permissionSaveError, setPermissionSaveError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false); const [files, setFiles] = useState<string[]>([]); const [contextItems, setContextItems] = useState<string[]>([]); const [viewer, setViewer] = useState<ChatMessage['artifact']>(undefined); const [socket, setSocket] = useState<WebSocket | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    request<UserSettings>('/settings').then((saved) => setPermission(saved.permission_policy)).catch(() => setPermission('ask'))
+  }, [])
+
+  useEffect(() => {
+    if (campaign) setMode('execute')
+  }, [campaign])
 
   useEffect(() => {
     const textarea = inputRef.current
@@ -161,10 +246,18 @@ function Assistant({ fullPage = false }: { fullPage?: boolean }) {
   }, [input])
 
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = API_URL.replace(/^https?:\/\//, '').replace(/\/api$/, '')
-    const connection = new WebSocket(`${protocol}//${host}/api/assistant/ws`)
-    connection.onmessage = (event) => { const data = JSON.parse(event.data) as { reply: string; artifact?: { title: string; content: string } }; setMessages((items) => [...items, { role: 'agent', text: data.reply, artifact: data.artifact }]); setBusy(false) }
+    const token = localStorage.getItem('kloppy-session')
+    if (!token) return
+    const websocketBase = API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
+    const connection = new WebSocket(`${websocketBase}/assistant/ws?access_token=${encodeURIComponent(token)}`)
+    connection.onmessage = (event) => {
+      const data = JSON.parse(event.data) as { reply?: string; error?: string; artifact?: { title: string; content: string } }
+      const errorMessage = data.error?.toLowerCase().includes('not configured')
+        ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.'
+        : data.error ? 'I couldn’t complete that just now. Please try again in a moment.' : undefined
+      setMessages((items) => [...items, { role: 'agent', text: data.reply ?? errorMessage ?? 'The agent returned no response.', artifact: data.artifact }])
+      setBusy(false)
+    }
     connection.onopen = () => setSocket(connection)
     connection.onclose = () => setSocket(null)
     return () => connection.close()
@@ -172,28 +265,48 @@ function Assistant({ fullPage = false }: { fullPage?: boolean }) {
 
   const send = async (value = input) => {
     if (!value.trim() || busy) return
-    const payload = { message: value, mode, model, permission, attachments: files, context_items: contextItems }
+    const conversation_history = messages.slice(-16).map((message) => ({
+      role: message.role === 'agent' ? 'assistant' as const : 'user' as const,
+      content: message.text,
+    }))
+    const payload = { message: value, mode, model, permission, attachments: files, context_items: contextItems, conversation_history }
+    onConversationStart?.()
     setMessages((items) => [...items, { role: 'user', text: value }]); setInput(''); setBusy(true)
     if (socket?.readyState === WebSocket.OPEN) { socket.send(JSON.stringify(payload)); return }
-    try { const data = await request<{ reply: string; artifact?: { title: string; content: string } }>('/assistant/chat', { method: 'POST', body: JSON.stringify(payload) }); setMessages((items) => [...items, { role: 'agent', text: data.reply, artifact: data.artifact }]) } catch { setMessages((items) => [...items, { role: 'agent', text: 'I’m offline from the campaign service right now, but I can still help you frame the next decision. Try again in a moment.' }]) } finally { setBusy(false) }
+    try { const data = await request<{ reply: string; artifact?: { title: string; content: string } }>('/assistant/chat', { method: 'POST', body: JSON.stringify(payload) }); setMessages((items) => [...items, { role: 'agent', text: data.reply, artifact: data.artifact }]) } catch (error) { const detail = error instanceof Error ? error.message : ''; const message = detail.toLowerCase().includes('not configured') ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.' : 'I couldn’t reach the campaign service just now. Please try again in a moment.'; setMessages((items) => [...items, { role: 'agent', text: message }]) } finally { setBusy(false) }
+  }
+
+  const savePermissionPolicy = async (policy: PermissionPolicy) => {
+    setPermissionSaveError('')
+    try {
+      const current = await request<UserSettings>('/settings')
+      const updated = await request<UserSettings>('/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ ...current, permission_policy: policy }),
+      })
+      setPermission(updated.permission_policy)
+    } catch {
+      setPermissionSaveError('Could not save this approval preference. The previous saved setting remains active.')
+    }
   }
 
   const addFile = (event: ChangeEvent<HTMLInputElement>) => { const names = Array.from(event.target.files ?? []).map((file) => file.name); setFiles((items) => [...items, ...names]); event.target.value = '' }
   const addContext = (label: string) => { setContextItems((items) => items.includes(label) ? items.filter((item) => item !== label) : [...items, label]); setMenuOpen(false) }
   return <aside className={`assistant-panel ${fullPage ? 'full-page-chat' : ''}`}>
     <div className="assistant-head"><div><h2>What should we make true?</h2><span className="assistant-runtime"><span className="live-dot" /> {socket ? 'Live via WebSocket' : 'Ready for a message'}</span></div><button className="more-button" aria-label="Assistant options"><Icon name="dots" /></button></div>
-    <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div><p>{message.text}</p>{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><p className="thinking"><i /><i /><i /></p></div>}</div>
-    <div className="prompt-chips"><button onClick={() => send('What should I do next?')}>What should I do next?</button><button onClick={() => send('Find my first audience')}>Find my first audience</button><button onClick={() => send('Build the campaign plan')}>Build the plan</button></div>
+    <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div>{message.role === 'agent' ? <FormattedText text={message.text} /> : <p>{message.text}</p>}{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><p className="thinking"><i /><i /><i /></p></div>}</div>
+    {!messages.some((message) => message.role === 'user') && <div className="prompt-chips">{(campaign ? ['Create campaign assets', 'Write social post variations', 'Develop a visual direction'] : ['What should I do next?', 'Find my first audience', 'Build the campaign plan']).map((suggestion) => <button key={suggestion} onClick={() => send(suggestion)}>{suggestion}</button>)}</div>}
     {(files.length > 0 || contextItems.length > 0) && <div className="composer-context">{[...files, ...contextItems].map((item) => <span key={item}><Icon name={files.includes(item) ? 'file' : 'book'} size={12} /> {item}<button onClick={() => files.includes(item) ? setFiles((items) => items.filter((entry) => entry !== item)) : setContextItems((items) => items.filter((entry) => entry !== item))} aria-label={`Remove ${item}`}>×</button></span>)}</div>}
     {menuOpen && <div className="composer-menu"><label className="menu-action"><Icon name="file" size={15} /> Add files<input type="file" multiple onChange={addFile} /></label><button className={contextItems.includes('Brand knowledge') ? 'selected' : ''} onClick={() => addContext('Brand knowledge')}><Icon name="book" size={15} /> Brand knowledge</button><button className={contextItems.includes('Campaign skills') ? 'selected' : ''} onClick={() => addContext('Campaign skills')}><Icon name="spark" size={15} /> Campaign skills</button></div>}
-    <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}><button type="button" className={`composer-plus ${menuOpen ? 'active' : ''}`} aria-label="Add files, knowledge, or skills" onClick={() => setMenuOpen(!menuOpen)}><Icon name="plus" size={18} /></button><textarea ref={inputRef} aria-label="Ask Kloppy" value={input} onChange={(e) => setInput(e.target.value)} placeholder={`Ask Kloppy to ${modeCopy[mode].label.toLowerCase()}…`} rows={1} /><div className="composer-controls"><label className="composer-select"><Icon name="spark" size={13} /><select aria-label="Chat mode" value={mode} onChange={(e) => setMode(e.target.value as ChatMode)}>{Object.entries(modeCopy).map(([value, copy]) => <option value={value} key={value}>{copy.label}</option>)}</select></label><label className="composer-select"><Icon name="activity" size={13} /><select aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)}>{models.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label><label className="composer-select"><Icon name="lock" size={13} /><select aria-label="Permission policy" value={permission} onChange={(e) => setPermission(e.target.value as PermissionPolicy)}><option value="ask">Ask before actions</option><option value="auto">Auto-approve actions</option></select></label><button aria-label="Send message" disabled={!input.trim() || busy}><Icon name="send" size={17} /></button></div></form>
-    <span className="assistant-note">{modeCopy[mode].description} {permission === 'ask' ? 'Kloppy will ask before consequential actions.' : 'Consequential actions are auto-approved.'}</span>
+    <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}><div className="composer-main"><button type="button" className={`composer-plus ${menuOpen ? 'active' : ''}`} aria-label="Add files, knowledge, or skills" onClick={() => setMenuOpen(!menuOpen)}><Icon name="plus" size={18} /></button><textarea ref={inputRef} aria-label="Ask Kloppy" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} placeholder={`Ask Kloppy to ${modeCopy[mode].label.toLowerCase()}…`} rows={1} /><button type="submit" className="composer-send" aria-label="Send message" disabled={!input.trim() || busy}><Icon name="send" size={17} /></button></div><div className="composer-controls"><label className="composer-select"><Icon name="spark" size={13} /><select aria-label="Chat mode" value={mode} onChange={(e) => setMode(e.target.value as ChatMode)}>{Object.entries(modeCopy).map(([value, copy]) => <option value={value} key={value}>{copy.label}</option>)}</select></label><label className="composer-select"><Icon name="activity" size={13} /><select aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)}>{models.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label><label className="composer-select"><Icon name="lock" size={13} /><select aria-label="Permission policy" value={permission} onChange={(e) => void savePermissionPolicy(e.target.value as PermissionPolicy)}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label></div></form>
+    <span className="assistant-note">{permissionSaveError || `${modeCopy[mode].description} ${permission === 'ask' ? 'Kloppy checks your saved settings and asks before consequential actions.' : 'Drafting may run automatically; publishing and spend still require your explicit approval.'}`}</span>
     {viewer && <div className="artifact-viewer" role="dialog" aria-modal="true"><div className="artifact-head"><div><span className="eyebrow">Generated document</span><h3>{viewer.title}</h3></div><button className="more-button" aria-label="Close document" onClick={() => setViewer(undefined)}>×</button></div><pre>{viewer.content}</pre></div>}
   </aside>
 }
 
 function ChatPage({ campaign = false }: { campaign?: boolean }) {
-  return <section className="chat-page"><div className="chat-page-intro"><h1>{campaign ? 'What should we make true for this campaign?' : 'What should we make true?'}</h1><p>{campaign ? 'Keep the brief, decisions, and next actions connected while you move this campaign forward.' : 'Bring a brief, a question, or a half-formed idea. Kloppy will help you find the signal and shape the next campaign.'}</p></div><Assistant fullPage /></section>
+  const [conversationStarted, setConversationStarted] = useState(false)
+  return <section className={`chat-page ${conversationStarted ? 'conversation-started' : ''}`}>{!conversationStarted && <div className="chat-page-intro"><h1>{campaign ? 'Make your campaign with Kloppy.' : 'What should we make true?'}</h1><p>{campaign ? 'Build strategy, copy, and creative in one conversation. Kloppy keeps the brief, decisions, and campaign work connected.' : 'Bring a brief, a question, or a half-formed idea. Kloppy will help you find the signal and shape the next campaign.'}</p></div>}<Assistant fullPage campaign={campaign} onConversationStart={() => setConversationStarted(true)} /></section>
 }
 
 function Overview({ data, onNavigate }: { data: typeof fallbackDashboard; onNavigate: (prompt: string) => void }) {
@@ -201,12 +314,11 @@ function Overview({ data, onNavigate }: { data: typeof fallbackDashboard; onNavi
   return <><section className="page-heading"><div><div className="heading-meta"><span className="live-dot" /> Campaign in progress <span className="meta-divider" /> Last updated {data.campaign.updated}</div><h1>{data.campaign.headline}</h1><p className="heading-copy">{data.campaign.description}</p></div><button className="button primary" onClick={() => onNavigate('Build a campaign plan')}><Icon name="plus" size={16} /> New campaign</button></section><section className="journey-panel"><div className="journey-header"><div><span className="section-kicker">Campaign journey</span><h2>From signal to signal boost</h2></div><button className="text-button" onClick={() => onNavigate('Open the campaign map')} >Open campaign map <Icon name="arrow" size={15} /></button></div><div className="journey-track"><div className="journey-line" />{['Brief', 'Audience', 'Strategy', 'Creative', 'Launch'].map((step, index) => <div className={`journey-step ${index < 2 ? 'complete' : index === 2 ? 'current' : 'next'}`} key={step}><div className="journey-node"><Icon name={['brief', 'insights', 'strategy', 'creative', 'play'][index] as IconName} size={17} /></div><span>{step}</span>{index === 2 && <small>In review</small>}</div>)}</div></section><div className="dashboard-grid"><article className="panel"><div className="panel-head"><div><span className="section-kicker">Audience intelligence</span><h2>What the signal says</h2></div><Icon name="spark" size={18} /></div><div className="insight-callout"><div className="spark-icon"><Icon name="spark" size={19} /></div><div><strong>{data.campaign.insight.title}</strong><p>{data.campaign.insight.description}</p></div></div><div className="source-row"><span className="source-badge">EVIDENCE</span><span>{data.campaign.insight.confidence}</span><button className="inline-link" onClick={() => onNavigate('Show me the evidence')}>See evidence <Icon name="arrow" size={13} /></button></div></article><article className="panel"><div className="panel-head"><div><span className="section-kicker">Your next decision</span><h2>Choose a first audience</h2></div><span className="step-chip">02 / 04</span></div><p className="panel-intro">Pick the audience to shape your message around. You can change this before launch.</p><div className="segment-list">{data.segments.map((segment, index) => <button className={`segment-row ${selected === index ? 'selected' : ''}`} key={segment.name} onClick={() => setSelected(index)}><span className={`segment-marker ${segment.color}`} /><span className="segment-info"><strong>{segment.name}</strong><small>{segment.signal}</small></span><span className={`fit-label ${segment.color}`}>{segment.note}</span><span className="radio-indicator" /></button>)}</div></article></div><div className="bottom-grid"><article className="panel"><div className="panel-head"><div><span className="section-kicker">Strategy draft</span><h2>{data.campaign.strategy.title}</h2></div><span className="draft-status"><span /> Draft</span></div><div className="strategy-body"><div><span className="label">Positioning</span><p>{data.campaign.strategy.positioning}</p></div><div><span className="label">Message pillar</span><p className="quoted">“{data.campaign.strategy.pillar}”</p></div><div><span className="label">Recommended channel</span><p>{data.campaign.strategy.channel}</p></div></div><button className="text-button small" onClick={() => onNavigate('Review the strategy')}>Review strategy <Icon name="arrow" size={14} /></button></article><article className={`launch-panel ${approved ? 'approved' : ''}`}><div className="launch-orbit"><div className="orbit-ring ring-one" /><div className="orbit-ring ring-two" /><div className="launch-core"><Icon name={approved ? 'trend' : 'play'} size={25} /></div></div><span className="section-kicker">{approved ? 'Ready for creative' : 'One step at a time'}</span><h2>{approved ? 'Audience selected.' : 'Make the signal useful.'}</h2><p>{approved ? 'Your strategy can now move into creative production.' : `Select “${data.segments[selected].name}” to make it the lead audience.`}</p><button className="button launch-button" onClick={() => setApproved(!approved)}>{approved ? 'Undo selection' : 'Approve audience'} <Icon name={approved ? 'check' : 'arrow'} size={15} /></button></article></div></>
 }
 
-function StagePage({ page, onAsk, onCampaignOpen, searchQuery = '' }: { page: 'campaigns' | 'audience' | 'strategy' | 'creative' | 'launch'; onAsk: (prompt: string) => void; onCampaignOpen?: () => void; searchQuery?: string }) {
+function StagePage({ page, onAsk, onCampaignOpen, searchQuery = '' }: { page: 'campaigns' | 'audience' | 'strategy' | 'launch'; onAsk: (prompt: string) => void; onCampaignOpen?: () => void; searchQuery?: string }) {
   const content = {
     campaigns: { eyebrow: 'Campaign history', title: 'Every launch, still useful.', copy: 'Keep the decisions, assets, and learnings from every campaign your business has carried out.', action: 'Start a campaign', icon: 'campaigns' as IconName, items: ['Oyin Fab Studio · Lagos capsule', 'Ame Studio · Harmattan edit', 'Oyin Fab Studio · Community pop-up', 'Ame Studio · Founder story'] },
     audience: { eyebrow: 'Audience intelligence', title: 'Know who to make it for.', copy: 'Turn a product brief into audience directions with evidence, confidence, and a clear next question.', action: 'Ask for an audience read', icon: 'insights' as IconName, items: ['Culture-led early adopters', 'Practical momentum buyers', 'Curious category switchers'] },
     strategy: { eyebrow: 'Strategy', title: 'Make the next decision clearer.', copy: 'Keep positioning, message pillars, channels, and trade-offs connected to the audience you chose.', action: 'Review the strategy', icon: 'strategy' as IconName, items: ['Positioning draft', 'Message architecture', 'Channel recommendation'] },
-    creative: { eyebrow: 'Creative studio', title: 'Make the capsule feel inevitable.', copy: 'A campaign room for the audience, strategy, creative, and launch decisions behind this collection.', action: 'Plan the creative set', icon: 'creative' as IconName, items: ['Audience · Lagos design-conscious women', 'Strategy · Dress for the room you are entering', 'Creative · Film, lookbook, social, and email', 'Launch · Instagram, Shopify, and creator seeding'] },
     launch: { eyebrow: 'Launch & learn', title: 'Move from ready to live.', copy: 'Review what is authorized, execute through connected business tools, and bring performance back into the next decision.', action: 'Prepare launch review', icon: 'trend' as IconName, items: ['Approval checklist', 'Execution queue', 'Performance readback'] },
   }[page]
   const filteredItems = content.items.filter((item) => !searchQuery.trim() || item.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -236,24 +348,59 @@ function Integrations({ searchQuery = '' }: { searchQuery?: string }) {
   return <><div className="page-heading compact"><div><h1>Let Kloppy work<br />where work already happens.</h1><p className="heading-copy">Connect the tools and knowledge your agent can use to research, create, distribute, and learn. Access is scoped, visible, and always revocable.</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setCustomOpen(!customOpen)}><Icon name="plus" size={15} /> Add custom</button><button className="button secondary"><Icon name="external" size={15} /> View connector docs</button></div></div>{customOpen && <form className="custom-connector" onSubmit={addCustom}><div><span className="section-kicker">In-house connector</span><h2>Connect a company-owned system.</h2><p>Add a private app, site, API, or internal resource to the connector directory.</p></div><label>Name<input value={customName} onChange={(event) => setCustomName(event.target.value)} placeholder="Oyin Fab inventory API" required /></label><label>URL<input type="url" value={customUrl} onChange={(event) => setCustomUrl(event.target.value)} placeholder="https://internal.example.com" required /></label><button className="button primary" type="submit">Save connection <Icon name="check" size={15} /></button></form>}<div className="connector-toolbar"><div className="filter-tabs">{(['All', 'Applications', 'Resources'] as const).map((option) => <button className={filter === option ? 'active' : ''} key={option} onClick={() => setFilter(option)}>{option}<span>{option === 'All' ? items.length : items.filter((item) => item.kind === option.slice(0, -1)).length}</span></button>)}</div></div><div className="connector-grid">{visible.length ? visible.map((item) => <article className="connector-card" key={item.id}><div className="connector-card-head"><div className={`connector-logo logo-${item.id}`}>{item.logo}</div><span className={`connector-status ${item.connected ? 'connected' : ''}`}><span />{item.connected ? 'Connected' : 'Available'}</span></div><span className="integration-category">{item.kind} · {item.category}</span><h2>{item.name}</h2><p>{item.description}</p><div className="connector-card-foot"><span className="connector-scope">{item.connected ? 'Read + draft access' : 'OAuth connection'}</span><button className={`button ${item.connected ? 'secondary' : 'primary'}`} onClick={() => void toggle(item.id, item.connected)}>{item.connected ? 'Manage' : 'Connect'}</button></div></article>) : <div className="connector-empty">No connectors match “{searchQuery}”. Try a provider, capability, or category.</div>}</div></>
 }
 
-function Settings() { const [profile, setProfile] = useState({ name: 'Amara K.', workspace: 'Lagos launch Ame Studio', digest_enabled: true }); const [saved, setSaved] = useState(false); const save = async (e: FormEvent) => { e.preventDefault(); try { const updated = await request<typeof profile>('/settings', { method: 'PUT', body: JSON.stringify(profile) }); setProfile(updated); setSaved(true); setTimeout(() => setSaved(false), 2400) } catch { setSaved(false) } }; return <><div className="page-heading compact"><div><div className="heading-meta">Account settings</div><h1>Set the room<br />up for better work.</h1><p className="heading-copy">Control how Kloppy speaks, where your work lives, and which decisions need your approval.</p></div></div><form className="settings-layout" onSubmit={save}><section className="settings-section"><div><span className="section-kicker">Account identity</span><h2>How your team sees this space</h2><p>These details help Kloppy keep campaign language grounded in your world.</p></div><div className="settings-fields"><label>Your name<input value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} /></label><label>Organization name<input value={profile.workspace} onChange={(e) => setProfile({ ...profile, workspace: e.target.value })} /></label></div></section><section className="settings-section"><div><span className="section-kicker">Working style</span><h2>Keep the signal visible</h2><p>Kloppy always separates evidence, hypothesis, and action.</p></div><label className="toggle-row"><span><strong>Weekly campaign digest</strong><small>A short read on what changed and what deserves your attention.</small></span><input type="checkbox" checked={profile.digest_enabled} onChange={(e) => setProfile({ ...profile, digest_enabled: e.target.checked })} /><span className="toggle" /></label></section><div className="settings-footer"><span className="secure-note"><Icon name="lock" size={13} /> Changes are saved privately.</span><button className="button primary" type="submit">{saved ? 'Saved' : 'Save changes'} <Icon name={saved ? 'check' : 'arrow'} size={15} /></button></div></form></> }
+function Settings() {
+  const [profile, setProfile] = useState<UserSettings>({ name: '', workspace: '', digest_enabled: true, permission_policy: 'ask' })
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  useEffect(() => { request<UserSettings>('/settings').then(setProfile).catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not load settings.')).finally(() => setLoading(false)) }, [])
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    setError('')
+    try {
+      const updated = await request<UserSettings>('/settings', { method: 'PUT', body: JSON.stringify(profile) })
+      setProfile(updated)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2400)
+    } catch (reason) {
+      setSaved(false)
+      setError(reason instanceof Error ? reason.message : 'Could not save settings.')
+    }
+  }
+  return <><div className="page-heading compact"><div><div className="heading-meta">Account settings</div><h1>Set the room<br />up for better work.</h1><p className="heading-copy">Control how Kloppy speaks, where your work lives, and which decisions need your approval.</p></div></div><form className="settings-layout" onSubmit={save}><section className="settings-section"><div><span className="section-kicker">Account identity</span><h2>How your team sees this space</h2><p>These details help Kloppy keep campaign language grounded in your world.</p></div><div className="settings-fields"><label>Your name<input required minLength={2} maxLength={80} value={profile.name} onChange={(event) => setProfile({ ...profile, name: event.target.value })} /></label><label>Organization name<input required minLength={2} maxLength={120} value={profile.workspace} onChange={(event) => setProfile({ ...profile, workspace: event.target.value })} /></label></div></section><section className="settings-section"><div><span className="section-kicker">Working style</span><h2>Keep the signal visible</h2><p>Drafting can happen quickly; publishing and spend always need clear approval.</p></div><div className="settings-fields"><label>Draft approval preference<select value={profile.permission_policy} onChange={(event) => setProfile({ ...profile, permission_policy: event.target.value as UserSettings['permission_policy'] })}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label><label className="toggle-row"><span><strong>Weekly campaign digest</strong><small>A short read on what changed and what deserves your attention.</small></span><input type="checkbox" checked={profile.digest_enabled} onChange={(event) => setProfile({ ...profile, digest_enabled: event.target.checked })} /><span className="toggle" /></label></div></section><div className="settings-footer"><span className="secure-note"><Icon name="lock" size={13} /> {loading ? 'Loading saved settings…' : error || 'Changes are saved privately.'}</span><button className="button primary" type="submit" disabled={loading}>{saved ? 'Saved' : 'Save changes'} <Icon name={saved ? 'check' : 'arrow'} size={15} /></button></div></form></>
+}
 function CampaignTabs({ page, setPage }: { page: Page; setPage: (page: Page) => void }) {
   return <nav className="campaign-tabs" aria-label="Campaign sections">{campaignNav.map((item) => <button aria-label={item.label} className={page === item.page ? 'active' : ''} key={item.page} onClick={() => setPage(item.page)}>{item.page === 'campaign-chat' ? <KloppyMark /> : <Icon name={item.icon} size={15} />}{item.page === 'campaign-chat' ? null : item.label}</button>)}</nav>
 }
 
 function App() {
-  const [route, setRoute] = useState(window.location.hash.slice(1) || 'landing'); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [user, setUser] = useState({ name: 'Amara K.' }); const [data, setData] = useState(fallbackDashboard); const [searchQuery, setSearchQuery] = useState('')
-  useEffect(() => { const sync = () => setRoute(window.location.hash.slice(1) || 'landing'); window.addEventListener('hashchange', sync); return () => window.removeEventListener('hashchange', sync) }, [])
-  useEffect(() => { if (route === 'overview' || route === 'campaigns' || route === 'audience' || route === 'strategy' || route === 'creative' || route === 'launch' || route === 'integrations' || route === 'settings') request<typeof fallbackDashboard>('/dashboard').then(setData).catch(() => undefined) }, [route])
+  const initialRoute = window.location.hash.slice(1) || 'landing'
+  const [route, setRoute] = useState(initialRoute === 'creative' ? 'campaign-chat' : initialRoute); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [user, setUser] = useState({ name: 'Amara K.' }); const [data, setData] = useState(fallbackDashboard); const [searchQuery, setSearchQuery] = useState('')
+  useEffect(() => {
+    const sync = () => {
+      const current = window.location.hash.slice(1) || 'landing'
+      if (current === 'creative') {
+        window.location.hash = 'campaign-chat'
+        setRoute('campaign-chat')
+        return
+      }
+      setRoute(current)
+    }
+    window.addEventListener('hashchange', sync)
+    if (initialRoute === 'creative') window.location.hash = 'campaign-chat'
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
+  useEffect(() => { if (route === 'overview' || route === 'campaigns' || route === 'audience' || route === 'strategy' || route === 'launch' || route === 'integrations' || route === 'settings') request<typeof fallbackDashboard>('/dashboard').then(setData).catch(() => undefined) }, [route])
   const go = (next: string) => { window.location.hash = next }
+  const logout = () => { localStorage.removeItem('kloppy-session'); setAuthMode('login'); go('landing') }
   if (route === 'landing') return <Landing onAuth={(mode) => { setAuthMode(mode); go('auth') }} />
   if (route === 'auth') return <Auth mode={authMode} onMode={setAuthMode} onComplete={(nextUser) => { setUser(nextUser); go('chat') }} />
-  const pages: Page[] = ['chat', 'campaigns', 'knowledge', 'integrations', 'settings', 'campaign-chat', 'overview', 'audience', 'strategy', 'creative', 'launch']
+  const pages: Page[] = ['chat', 'campaigns', 'knowledge', 'integrations', 'settings', 'campaign-chat', 'overview', 'audience', 'strategy', 'launch']
   const page = (pages.includes(route as Page) ? route : 'chat') as Page
-  const pageTitle = page === 'chat' ? 'Kloppy' : page === 'knowledge' ? 'Knowledge' : ['campaign-chat', 'overview', 'audience', 'strategy', 'creative', 'launch'].includes(page) ? campaignNav.find((item) => item.page === page)?.label ?? 'Campaign' : navItems.find((item) => item.page === page)?.label ?? page
-  const hasStudio = ['campaign-chat', 'overview', 'audience', 'strategy', 'creative', 'launch'].includes(page)
+  const pageTitle = page === 'chat' ? 'Kloppy' : page === 'knowledge' ? 'Knowledge' : ['campaign-chat', 'overview', 'audience', 'strategy', 'launch'].includes(page) ? campaignNav.find((item) => item.page === page)?.label ?? 'Campaign' : navItems.find((item) => item.page === page)?.label ?? page
+  const hasStudio = ['campaign-chat', 'overview', 'audience', 'strategy', 'launch'].includes(page)
   const canSearch = page === 'campaigns' || page === 'integrations'
-  return <div className="app-shell"><Sidebar page={page} setPage={(next) => go(next)} user={user} /><main className="main-content"><header className="topbar"><div className="breadcrumb"><span>Kloppy</span><Icon name="chevron" size={14} /><strong>{pageTitle}</strong></div>{canSearch && <div className="topbar-actions"><label className="search-control"><Icon name="search" size={17} /><input aria-label={`Search ${page}`} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={page === 'campaigns' ? 'Search campaigns' : 'Search connectors'} /><kbd>⌘ K</kbd></label></div>}</header>{hasStudio && <CampaignTabs page={page} setPage={(next) => go(next)} />}<div className={page === 'chat' || page === 'campaign-chat' ? 'chat-page-wrap' : 'page-wrap'}>{page === 'chat' && <ChatPage />}{page === 'campaign-chat' && <ChatPage campaign />}{page === 'campaigns' && <StagePage page="campaigns" onAsk={() => go('campaign-chat')} onCampaignOpen={() => go('creative')} searchQuery={searchQuery} />}{page === 'knowledge' && <Knowledge />}{page === 'overview' && <Overview data={data} onNavigate={() => go('campaign-chat')} />}{['audience', 'strategy', 'creative', 'launch'].includes(page) && <StagePage page={page as 'audience' | 'strategy' | 'creative' | 'launch'} onAsk={() => go('campaign-chat')} />}{page === 'integrations' && <Integrations searchQuery={searchQuery} />}{page === 'settings' && <Settings />}</div></main></div>
+  return <div className="app-shell"><Sidebar page={page} setPage={(next) => go(next)} user={user} onLogout={logout} /><main className="main-content"><header className="topbar"><div className="breadcrumb"><span>Kloppy</span><Icon name="chevron" size={14} /><strong>{pageTitle}</strong></div>{canSearch && <div className="topbar-actions"><label className="search-control"><Icon name="search" size={17} /><input aria-label={`Search ${page}`} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={page === 'campaigns' ? 'Search campaigns' : 'Search connectors'} /><kbd>⌘ K</kbd></label></div>}</header>{hasStudio && <CampaignTabs page={page} setPage={(next) => go(next)} />}<div className={page === 'chat' || page === 'campaign-chat' ? 'chat-page-wrap' : 'page-wrap'}>{page === 'chat' ? <ChatPage /> : page === 'campaign-chat' ? <ChatPage campaign /> : null}{page === 'campaigns' && <StagePage page="campaigns" onAsk={() => go('campaign-chat')} onCampaignOpen={() => go('campaign-chat')} searchQuery={searchQuery} />}{page === 'knowledge' && <Knowledge />}{page === 'overview' && <Overview data={data} onNavigate={() => go('campaign-chat')} />}{['audience', 'strategy', 'launch'].includes(page) && <StagePage page={page as 'audience' | 'strategy' | 'launch'} onAsk={() => go('campaign-chat')} />}{page === 'integrations' && <Integrations searchQuery={searchQuery} />}{page === 'settings' && <Settings />}</div></main></div>
 }
 
 export default App

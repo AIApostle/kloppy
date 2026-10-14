@@ -1,6 +1,13 @@
 """Agent conversation contracts."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+
+class ConversationTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
 
 
 class ChatRequest(BaseModel):
@@ -10,6 +17,7 @@ class ChatRequest(BaseModel):
     permission: str = Field(default="ask", pattern="^(ask|auto)$")
     attachments: list[str] = Field(default_factory=list, max_length=12)
     context_items: list[str] = Field(default_factory=list, max_length=12)
+    conversation_history: list[ConversationTurn] = Field(default_factory=list, max_length=16)
 
 
 class ChatResponse(BaseModel):

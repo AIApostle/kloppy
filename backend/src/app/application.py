@@ -27,6 +27,8 @@ def create_app() -> FastAPI:
         app.include_router(router, prefix=settings.api_prefix)
 
     @app.get("/health", tags=["system"])
+    @app.get("/ping", tags=["system"])
+    @app.get("/keepalive", tags=["system"])
     def health() -> dict[str, str]:
         return {"status": "ok", "service": settings.app_name}
 

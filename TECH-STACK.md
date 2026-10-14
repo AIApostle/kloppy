@@ -21,6 +21,9 @@ context, permissions, and auditability in Kloppy.
 - **API:** Python 3.11 and FastAPI.
 - **Agent orchestration:** Strands Agents SDK. Strands owns the agent loop,
   tool routing, specialist handoffs, and MCP client connections.
+- **Model gateway:** OpenRouter through Strands' OpenAI-compatible model
+  adapter. The default model is `openrouter/free`; the OpenRouter key stays
+  server-side in `OPENROUTER_API_KEY`.
 - **MCP:** external applications and in-house resources are exposed through
   scoped MCP connectors. Connector credentials remain server-side.
 - **Realtime chat:** FastAPI WebSockets for interactive turns and execution
