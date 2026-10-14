@@ -1,0 +1,65 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+wheels/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript and frontend build output
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Supabase local state and generated artifacts
+.supabase/
+supabase/.temp/
+supabase/.branches/
+supabase/.env*
+
+# MCP server configuration, local credentials, and generated MCP state
+.mcp.json
+.mcp/
+mcp.json
+mcp.*.json
+mcp-*.json
+.vscode/mcp.json
+.vscode/mcp.*.json
+**/mcp-server.json
+**/mcp-servers.json
+**/mcp-config.json
+**/mcp-secrets.json
+**/mcp-state/
+
+# Copilot and local agent runtime state
+.copilot/
+.agents/.cache/
+.agents/.state/
+.impeccable/.cache/
