@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDiscon
 
 from ..schemas.assistant import ChatRequest, ChatResponse
 from ..services.agent import AgentConfigurationError, AgentProviderError, StrandsAgentService
-from ..services.user_settings import SettingsStoreError, read_user_settings
+from ..services.user_settings import SettingsAuthenticationError, SettingsStoreError, read_user_settings
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 agent_service = StrandsAgentService()
@@ -22,8 +22,10 @@ def chat(
     try:
         user_settings = read_user_settings(authorization[7:].strip())
         return agent_service.respond(payload, user_settings)
-    except SettingsStoreError as error:
+    except SettingsAuthenticationError as error:
         raise HTTPException(status_code=401, detail="Settings or authentication could not be verified.") from error
+    except SettingsStoreError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     except AgentConfigurationError as error:
         raise HTTPException(status_code=503, detail="The agent is not configured.") from error
     except AgentProviderError as error:
@@ -39,8 +41,13 @@ async def chat_socket(websocket: WebSocket) -> None:
         return
     try:
         user_settings = read_user_settings(token)
-    except SettingsStoreError:
+    except SettingsAuthenticationError:
         await websocket.close(code=1008, reason="Settings or authentication could not be verified")
+        return
+    except SettingsStoreError as error:
+        await websocket.accept()
+        await websocket.send_json({"type": "response", "error": str(error), "error_code": "settings_unavailable"})
+        await websocket.close(code=1011, reason="Settings storage unavailable")
         return
     await websocket.accept()
     try:
@@ -76,7 +83,14 @@ async def chat_socket(websocket: WebSocket) -> None:
                 while not activity_queue.empty():
                     await websocket.send_json({"type": "activity", **activity_queue.get_nowait()})
                 response = await response_task
-            except (AgentConfigurationError, AgentProviderError, SettingsStoreError) as error:
+            except SettingsAuthenticationError as error:
+                await websocket.send_json({"type": "response", "error": str(error), "error_code": "authentication_required"})
+                await websocket.close(code=1008, reason="Authentication could not be verified")
+                return
+            except SettingsStoreError as error:
+                await websocket.send_json({"type": "response", "error": str(error), "error_code": "settings_unavailable"})
+                continue
+            except (AgentConfigurationError, AgentProviderError) as error:
                 await websocket.send_json({"type": "response", "error": str(error)})
                 continue
             await websocket.send_json({"type": "response", **response.model_dump()})

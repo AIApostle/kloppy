@@ -36,4 +36,6 @@ create policy user_settings_update_self on public.user_settings
 
 grant select, insert, update on public.user_settings to authenticated;
 
+notify pgrst, 'reload schema';
+
 commit;

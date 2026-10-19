@@ -4,6 +4,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from ..schemas.settings import ProfileUpdate
 from ..services.user_settings import (
+    SettingsAuthenticationError,
     SettingsStoreError,
     read_user_settings,
     save_user_settings,
@@ -22,9 +23,10 @@ def _token(authorization: str | None) -> str:
 def get_settings(authorization: str | None = Header(default=None)) -> dict:
     try:
         return read_user_settings(_token(authorization))
+    except SettingsAuthenticationError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
     except SettingsStoreError as error:
-        status = 401 if "Authentication" in str(error) else 503
-        raise HTTPException(status_code=status, detail=str(error)) from error
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @router.put("")
@@ -34,6 +36,7 @@ def update_settings(
 ) -> dict:
     try:
         return save_user_settings(_token(authorization), payload)
+    except SettingsAuthenticationError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
     except SettingsStoreError as error:
-        status = 401 if "Authentication" in str(error) else 503
-        raise HTTPException(status_code=status, detail=str(error)) from error
+        raise HTTPException(status_code=503, detail=str(error)) from error

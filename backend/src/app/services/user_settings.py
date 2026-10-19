@@ -12,6 +12,10 @@ class SettingsStoreError(RuntimeError):
     """Supabase settings storage is unavailable or rejected a request."""
 
 
+class SettingsAuthenticationError(SettingsStoreError):
+    """The supplied Supabase access token is missing, expired, or invalid."""
+
+
 def _headers(access_token: str) -> dict[str, str]:
     if not settings.supabase_url or not settings.supabase_publishable_key:
         raise SettingsStoreError("Supabase settings storage is not configured.")
@@ -33,10 +37,14 @@ def _user_id(access_token: str) -> str:
         )
         response.raise_for_status()
         user_id = response.json().get("id")
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code in {401, 403}:
+            raise SettingsAuthenticationError("Authentication could not be verified.") from error
+        raise SettingsStoreError("Supabase Auth could not verify the session right now.") from error
     except (httpx.HTTPError, ValueError, AttributeError) as error:
-        raise SettingsStoreError("Authentication could not be verified.") from error
+        raise SettingsStoreError("Supabase Auth could not verify the session right now.") from error
     if not isinstance(user_id, str) or not user_id:
-        raise SettingsStoreError("Authentication could not be verified.")
+        raise SettingsAuthenticationError("Authentication could not be verified.")
     return user_id
 
 
@@ -78,6 +86,17 @@ def _request_settings(access_token: str, method: str, body: dict[str, Any] | Non
             raise SettingsStoreError("Supabase did not return the saved settings.")
         return UserSettings.model_validate(rows[0]).model_dump()
     except (httpx.HTTPError, ValueError, KeyError, IndexError) as error:
+        response = getattr(error, "response", None)
+        if response is not None and response.status_code == 404:
+            try:
+                details = response.json()
+            except ValueError:
+                details = {}
+            if details.get("code") == "PGRST205":
+                raise SettingsStoreError(
+                    "Supabase cannot find public.user_settings in its Data API schema cache. "
+                    "Apply backend/db/003_user_settings.sql and refresh the Supabase schema cache."
+                ) from error
         raise SettingsStoreError(
             "Could not read or save user settings. Confirm the user_settings SQL migration is applied."
         ) from error
