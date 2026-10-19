@@ -10,9 +10,19 @@ from .routes.auth import router as auth_router
 
 def create_app() -> FastAPI:
     app = FastAPI(title=settings.app_name, version="0.1.0")
+    allowed_origins = list(
+        dict.fromkeys(
+            origin.strip().rstrip("/")
+            for origin in (
+                settings.frontend_origin,
+                *settings.frontend_origins.split(","),
+            )
+            if origin.strip()
+        )
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.frontend_origin],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

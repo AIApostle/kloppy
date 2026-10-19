@@ -82,7 +82,6 @@ create table if not exists public.messages (
   role text not null check (role in ('user', 'assistant', 'tool', 'system')),
   content jsonb not null,
   model_id text,
-  mode text check (mode in ('research', 'plan', 'execute')),
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now()
 );

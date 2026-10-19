@@ -23,5 +23,6 @@ integration, execution, and audit records needed by the current product. It
 does not create fake users or seed demo tenant data. `003_user_settings.sql`
 stores each authenticated user's editable profile and approval preference;
 RLS scopes every read and write to `auth.uid()`. The application verifies the
-Supabase access token and reads this row before processing chat, including
-every Execute-mode turn.
+Supabase access token and reads this row before processing every agent turn.
+`004_remove_chat_modes.sql` removes the legacy message mode column for
+databases that applied the earlier core schema.

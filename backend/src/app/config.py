@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     app_name: str = "Kloppy API"
     api_prefix: str = "/api"
     frontend_origin: str = "http://localhost:5173"
+    frontend_origins: str = "https://kloppy.vercel.app"
     environment: str = "development"
     supabase_url: str | None = Field(
         default=None,
@@ -28,7 +29,10 @@ class Settings(BaseSettings):
     )
     memwal_url: str | None = None
     memwal_api_key: str | None = None
-    strands_model_id: str | None = None
+    qloo_api_key: str | None = None
+    qloo_base_url: str = "https://api.qloo.com"
+    mcp_servers_json: str | None = None
+    strands_model_id: str = "openrouter/free"
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_http_referer: str | None = None

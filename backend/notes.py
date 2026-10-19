@@ -29,10 +29,10 @@ Stack decisions:
 - Strands Agents SDK orchestrates the agent and MCP connector tools.
 - Memwal stores explicit, tenant-scoped long-term memory.
 - WebSocket is the primary chat transport; HTTP remains a reconnect fallback.
-- Chat modes: research (search only), plan (research plus document), execute
-  (research, plan, and authorized action).
-- The composer exposes model selection, permission policy, file attachments,
-  knowledge context, and campaign skills.
+- Kloppy uses one intent-driven agent that chooses appropriate research,
+  planning, drafting, and authorized actions from the user's request.
+- The composer exposes permission policy, file attachments, knowledge context,
+  and campaign skills. OpenRouter uses its free model router by default.
 
 
 skills in knowledge page and can be invoked into the chat
@@ -44,7 +44,7 @@ set up amd memwal for this project and then openrouter free endpoint or anybette
 remembwe we are using qloo
 
 
-you are kloppy , you are a research,plan and execute mode, so do this and do same for the other modes
+Kloppy is one agent; infer the user's intent and use the workflow steps needed.
 
 klayeer
 

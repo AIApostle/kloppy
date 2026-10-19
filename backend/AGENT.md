@@ -30,11 +30,12 @@
 - Define provider-neutral interfaces before adding provider-specific adapters.
   Qloo is an audience-signal provider; Strands orchestrates agents; MCP
   adapters connect external applications and in-house resources.
-- Keep mode prompts in `src/app/prompts/`, one module per mode. The agent
-  service owns Strands and OpenRouter construction; routes own transport only.
-- OpenRouter credentials are server-only. Use `openrouter/free` when no
-  explicit model is selected and fail closed when `OPENROUTER_API_KEY` is
-  missing.
+- Keep one intent-driven agent prompt in `src/app/prompts/`. Kloppy chooses
+  workflow steps and tools from each request; do not add user-selectable
+  Research, Plan, or Execute modes. The agent service owns Strands and
+  OpenRouter construction; routes own transport only.
+- OpenRouter credentials are server-only. Use `openrouter/free` by default
+  and fail closed when `OPENROUTER_API_KEY` is missing.
 
 ## Data and tenancy
 
