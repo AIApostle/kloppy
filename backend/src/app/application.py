@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routes import assistant, dashboard, integrations, knowledge, settings as settings_routes
+from .routes import assistant, dashboard, integrations, knowledge, qloo, settings as settings_routes
 from .routes.auth import router as auth_router
 
 
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
         dashboard.router,
         integrations.router,
         knowledge.router,
+        qloo.router,
         settings_routes.router,
         assistant.router,
     ):

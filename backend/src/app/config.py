@@ -30,7 +30,10 @@ class Settings(BaseSettings):
     memwal_url: str | None = None
     memwal_api_key: str | None = None
     qloo_api_key: str | None = None
-    qloo_base_url: str = "https://api.qloo.com"
+    qloo_base_url: str = Field(
+        default="https://api.qloo.com",
+        validation_alias=AliasChoices("QLOO_API_URL", "QLOO_BASE_URL"),
+    )
     mcp_servers_json: str | None = None
     integration_encryption_key: str | None = None
     strands_model_id: str = "openrouter/free"

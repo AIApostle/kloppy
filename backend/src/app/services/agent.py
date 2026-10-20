@@ -184,6 +184,8 @@ def _tool_activity_label(name: str) -> str:
         return "Searching Qloo for relevant cultural entities"
     if "qloo_cultural" in normalized:
         return "Reading Qloo cultural affinity signals"
+    if "qloo_agent_grounding" in normalized:
+        return "Preparing grounded Qloo options"
     if "draft_document" in normalized:
         return "Preparing a document draft"
     return f"Using connected service tool: {name.replace('_', ' ')}"

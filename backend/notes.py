@@ -47,6 +47,10 @@ remembwe we are using qloo
 Kloppy is one agent; infer the user's intent and use the workflow steps needed.
 
 klayeer
+klood or clood
+
+use security first approach
+add don't rely on your training data always do proper research and be grounded
 
 """
 

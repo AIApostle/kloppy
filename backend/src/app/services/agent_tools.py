@@ -7,12 +7,20 @@ from contextlib import ExitStack
 from typing import Any
 from urllib.parse import urlparse
 
-import httpx
 from strands import ToolContext, tool
 from strands.tools.mcp import MCPClient
 
 from ..config import settings
 from .mcp_connections import user_server_config
+from .qloo import (
+    ENTITY_TYPES,
+    QlooConfigurationError,
+    QlooProviderError,
+    agent_grounding_options,
+    run_capability,
+    search_entities,
+)
+from ..schemas.qloo import QlooCapabilityRequest
 
 logger = logging.getLogger(__name__)
 
@@ -23,30 +31,15 @@ def qloo_search_entities(query: str, entity_type: str = "urn:entity:brand") -> d
     if not settings.qloo_api_key:
         return {"available": False, "message": "Qloo is not configured."}
     try:
-        response = httpx.get(
-            f"{settings.qloo_base_url.rstrip('/')}/search",
-            params={"query": query[:160], "types": entity_type, "take": 8},
-            headers={"X-Api-Key": settings.qloo_api_key, "Accept": "application/json"},
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        results = payload.get("results", {})
-        entities = results.get("entities", []) if isinstance(results, dict) else []
         return {
             "source": "Qloo API entity search",
-            "entities": [
-                {
-                    "name": item.get("name"),
-                    "entity_id": item.get("entity_id") or item.get("id"),
-                    "type": item.get("type"),
-                    "short_description": item.get("short_description"),
-                }
-                for item in entities[:8]
-                if isinstance(item, dict)
-            ],
+            "entities": search_entities(
+                query,
+                next((name for name, urn in ENTITY_TYPES.items() if urn == entity_type), "brand"),
+                take=8,
+            ),
         }
-    except (httpx.HTTPError, ValueError) as error:
+    except (QlooProviderError, ValueError) as error:
         logger.warning("Qloo entity search failed: %s", type(error).__name__)
         return {"source": "Qloo API entity search", "error": "Qloo search is temporarily unavailable."}
 
@@ -64,42 +57,41 @@ def qloo_cultural_affinities(
     safe_ids = [value[:160] for value in entity_ids[:8] if isinstance(value, str) and value.strip()]
     if not safe_ids:
         return {"error": "Provide one or more Qloo entity IDs from entity search."}
-    params: dict[str, str | int] = {
-        "filter.type": result_type,
-        "signal.interests.entities": ",".join(safe_ids),
-        "take": max(1, min(take, 20)),
-    }
-    if location_query.strip():
-        params["signal.location.query"] = location_query.strip()[:120]
     try:
-        response = httpx.get(
-            f"{settings.qloo_base_url.rstrip('/')}/v2/insights",
-            params=params,
-            headers={"X-Api-Key": settings.qloo_api_key, "Accept": "application/json"},
-            timeout=20,
+        category = next(
+            (name for name, urn in ENTITY_TYPES.items() if urn == result_type),
+            "brand",
         )
-        response.raise_for_status()
-        payload = response.json()
-        results = payload.get("results", {})
-        entities = results.get("entities", []) if isinstance(results, dict) else []
+        response = run_capability(
+            QlooCapabilityRequest(
+                capability="locality" if location_query.strip() else "recommendations",
+                entity_ids=safe_ids,
+                result_category=category,
+                location=location_query[:160] if location_query.strip() else None,
+                take=max(1, min(take, 20)),
+            )
+        )
         return {
-            "source": "Qloo API cultural affinity insights",
-            "interpretation": "Directional cultural affinity only; not proof of purchase intent or an individual's identity.",
-            "entities": [
-                {
-                    "name": item.get("name"),
-                    "entity_id": item.get("entity_id") or item.get("id"),
-                    "type": item.get("type"),
-                    "affinity": item.get("affinity") or item.get("score"),
-                    "tags": item.get("tags", [])[:8] if isinstance(item.get("tags"), list) else [],
-                }
-                for item in entities[:20]
-                if isinstance(item, dict)
-            ],
+            "source": response["source"],
+            "interpretation": response["interpretation"],
+            "entities": response["results"],
+            **({"heatmap": response["heatmap"]} if "heatmap" in response else {}),
         }
-    except (httpx.HTTPError, ValueError) as error:
+    except (QlooConfigurationError, QlooProviderError, ValueError) as error:
         logger.warning("Qloo affinity request failed: %s", type(error).__name__)
         return {"source": "Qloo API cultural affinity insights", "error": "Qloo insights are temporarily unavailable."}
+
+
+@tool
+def qloo_agent_grounding(query: str, entity_category: str = "brand", take: int = 8) -> dict[str, Any]:
+    """Return a short, Qloo-ranked list of factual cultural options for campaign research."""
+    if not settings.qloo_api_key:
+        return {"available": False, "message": "Qloo is not configured."}
+    try:
+        return agent_grounding_options(query, entity_category, take)
+    except (QlooConfigurationError, QlooProviderError, ValueError) as error:
+        logger.warning("Qloo agent grounding failed: %s", type(error).__name__)
+        return {"source": "Qloo API", "error": "Qloo grounding is temporarily unavailable."}
 
 
 @tool(context=True)
@@ -176,7 +168,7 @@ def agent_tool_session(access_token: str | None = None) -> tuple[ExitStack, list
     stack = ExitStack()
     tools: list[Any] = [draft_document]
     if settings.qloo_api_key:
-        tools.extend([qloo_search_entities, qloo_cultural_affinities])
+        tools.extend([qloo_search_entities, qloo_cultural_affinities, qloo_agent_grounding])
     clients = connected_mcp_clients(access_token)
     for client in clients:
         try:

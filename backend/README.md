@@ -31,8 +31,20 @@ that the server marks read-only. The current connector layer cannot publish,
 send, spend, or change external accounts. Those actions need dedicated
 provider write adapters and an approval flow.
 
-Qloo uses the server-only `QLOO_API_KEY` and is exposed to the agent as a
-backend tool; it does not appear as a user-configurable browser integration.
+Qloo uses the server-only `QLOO_API_KEY` and `QLOO_API_URL` (defaults to
+`https://api.qloo.com`). It is a built-in audience-research capability, not a
+user-configurable integration. The authenticated `/api/qloo/run` route
+supports entity enrichment, taste analysis, cross-category recommendations,
+location-based insights and heatmaps, explainable agent grounding, and
+downloadable snapshots for browser-local re-ranking. Qloo credentials are
+never sent to the browser. Results are directional cultural-affinity evidence,
+not proof of purchase intent or individual attributes.
+The implementation follows Qloo's [API overview](https://docs.qloo.com/reference/api-overview),
+[entity search](https://docs.qloo.com/reference/get-search),
+[entity lookup](https://docs.qloo.com/reference/get-entities),
+[taste analysis](https://docs.qloo.com/reference/taste-analysis),
+[location insights](https://docs.qloo.com/reference/insights-with-location-use-case),
+and [heatmap](https://docs.qloo.com/reference/heatmaps-use-case) guides.
 
 For example, configure separate entries in `MCP_SERVERS_JSON` using the MCP
 endpoint and exact read-only tool names provided by each service:

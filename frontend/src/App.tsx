@@ -26,6 +26,25 @@ const campaignNav: { label: string; page: Page; icon: IconName }[] = [
 
 type IntegrationItem = { id: string; name: string; kind: string; category: string; description: string; status: string; connected: boolean; server_url?: string | null; allowed_tools?: string[] }
 type KnowledgeSource = { id: string; title: string; content: string; source_type: 'brand_text' | 'document'; file_name?: string | null; created_at: string }
+const achaDemoTitle = 'ACHA demo brand brief — user-provided'
+const achaDemoContent = [
+  'Grounding: This short brief is based only on the user-provided description in this Kloppy session. It is not independently verified by a public source.',
+  'Known: ACHA is described as a fashion and footwear (shoes) brand.',
+  'Not provided or verified: specific products, location, target customers, price range, materials, manufacturing, sustainability claims, sales, or campaign results.',
+  'Demo guidance: Treat any audience or positioning ideas as hypotheses to test. Ask for product and market evidence before making factual brand claims. Qloo signals are directional cultural affinity, not purchase intent or verified customer traits.',
+].join('\n\n')
+type QlooCapability = 'enrichment' | 'taste' | 'recommendations' | 'locality' | 'grounding' | 'on_device'
+type QlooEntity = { name?: string; entity_id?: string; types?: string[]; rank?: number; affinity?: number; affinity_rank?: number; popularity?: number; description?: string; properties?: Record<string, unknown>; tags?: { name?: string }[] }
+type QlooResponse = { capability: QlooCapability; source: string; results: QlooEntity[]; heatmap?: { rank: number; latitude?: number; longitude?: number; affinity?: number; affinity_rank?: number; popularity?: number }[]; snapshot?: { schema_version: number; created_at: string; items: QlooEntity[]; [key: string]: unknown }; interpretation: string; ranking_basis?: string }
+const qlooCapabilities: { id: QlooCapability; label: string; detail: string }[] = [
+  { id: 'enrichment', label: 'Enrichment', detail: 'Resolve a record and attach Qloo attributes.' },
+  { id: 'taste', label: 'Taste intelligence', detail: 'Explore likely affinities from cultural interests.' },
+  { id: 'recommendations', label: 'Recommendations', detail: 'Carry a taste signal into another category.' },
+  { id: 'locality', label: 'Locality', detail: 'Explore nearby affinity and geographic heatmaps.' },
+  { id: 'grounding', label: 'Agent grounding', detail: 'Give Kloppy source-backed options in Qloo rank order.' },
+  { id: 'on_device', label: 'On-device', detail: 'Download a Qloo snapshot and re-rank it in this browser.' },
+]
+const qlooEntityCategories = ['place', 'artist', 'brand', 'book', 'movie', 'destination', 'person', 'podcast', 'tv_show'] as const
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
@@ -361,6 +380,7 @@ function CampaignList({ campaigns, onCreate, onOpen }: { campaigns: Campaign[]; 
 }
 
 function StagePage({ page, onAsk, onCampaignOpen, searchQuery = '' }: { page: 'campaigns' | 'audience' | 'strategy' | 'launch'; onAsk: (prompt: string) => void; onCampaignOpen?: () => void; searchQuery?: string }) {
+  if (page === 'audience') return <QlooWorkspace onAsk={onAsk} />
   const content = {
     campaigns: { eyebrow: 'Campaign history', title: 'Every launch, still useful.', copy: 'Open a named campaign to keep its conversation, decisions, and drafts together.', action: 'Start a campaign', icon: 'campaigns' as IconName, items: ['Create a named campaign', 'Open a campaign workspace'] },
     audience: { eyebrow: 'Audience intelligence', title: 'Know who to make it for.', copy: 'Build audience hypotheses from the product brief and available evidence. Qloo signals are directional, never proof of purchase intent.', action: 'Ask Kloppy for an audience read', icon: 'insights' as IconName, items: ['Share the product and market', 'Explore cultural affinity signals', 'Compare audience hypotheses'] },
@@ -369,6 +389,159 @@ function StagePage({ page, onAsk, onCampaignOpen, searchQuery = '' }: { page: 'c
   }[page]
   const filteredItems = content.items.filter((item) => !searchQuery.trim() || item.toLowerCase().includes(searchQuery.toLowerCase()))
   return <><div className="page-heading compact"><div><div className="heading-meta">{content.eyebrow}</div><h1>{content.title}</h1><p className="heading-copy">{content.copy}</p></div><button className="button primary" onClick={() => onAsk(content.action)}><KloppyMark /> Kloppy</button></div><section className="stage-layout"><div className="stage-main panel"><div className="stage-title"><div className="integration-icon"><Icon name={content.icon} size={21} /></div><div><span className="section-kicker">Campaign work</span><h2>{content.action}</h2></div></div><p className="stage-description">This view stays scoped to the selected campaign. Ask Kloppy to create the work, then review what has actually been saved here.</p><div className="stage-items">{filteredItems.length ? filteredItems.map((item, index) => <button key={item} onClick={() => page === 'campaigns' ? onCampaignOpen?.() : onAsk(`${content.action}: ${item}`)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item}</strong><Icon name="arrow" size={15} /></button>) : <div className="stage-empty">No actions match “{searchQuery}”. Try another search.</div>}</div></div><aside className="stage-aside"><span className="section-kicker">Campaign context</span><h2>Work stays with this campaign.</h2><p>Kloppy keeps the conversation for this campaign separate from your other campaign workspaces.</p><button className="text-button" onClick={() => onAsk(content.action)}><KloppyMark /> Open Kloppy <Icon name="arrow" size={14} /></button></aside></section></>
+}
+
+function QlooWorkspace({ onAsk }: { onAsk: (prompt: string) => void }) {
+  const [capability, setCapability] = useState<QlooCapability>('recommendations')
+  const [query, setQuery] = useState('')
+  const [entityCategory, setEntityCategory] = useState<(typeof qlooEntityCategories)[number]>('brand')
+  const [resultCategory, setResultCategory] = useState<(typeof qlooEntityCategories)[number]>('brand')
+  const [interestsInput, setInterestsInput] = useState('')
+  const [location, setLocation] = useState('')
+  const [goal, setGoal] = useState('')
+  const [result, setResult] = useState<QlooResponse | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const interests = interestsInput.split(/[,\n]/).map((value) => value.trim()).filter(Boolean).slice(0, 8)
+  const rankedSnapshot = result?.snapshot?.items
+    ? [...result.snapshot.items].sort((left, right) => {
+      const tokens = [...new Set([...interests, query].join(' ').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
+      const localScore = (entity: QlooEntity) => {
+        const text = `${JSON.stringify(entity.properties ?? {})} ${(entity.tags ?? []).map((tag) => tag.name ?? '').join(' ')}`.toLowerCase()
+        return tokens.reduce((score, token) => score + (text.includes(token) ? 1 : 0), 0)
+      }
+      return localScore(right) - localScore(left) || (left.rank ?? 0) - (right.rank ?? 0)
+    })
+    : []
+
+  const run = async (event: FormEvent) => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    setResult(null)
+    try {
+      const response = await request<QlooResponse>('/qloo/run', {
+        method: 'POST',
+        body: JSON.stringify({
+          capability,
+          query: query.trim() || null,
+          entity_category: entityCategory,
+          result_category: resultCategory,
+          interests,
+          location: location.trim() || null,
+          goal: goal.trim() || null,
+          take: capability === 'locality' ? 20 : 10,
+        }),
+      })
+      setResult(response)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Qloo could not complete this request.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const downloadSnapshot = () => {
+    if (!result?.snapshot) return
+    const href = URL.createObjectURL(new Blob([JSON.stringify(result.snapshot, null, 2)], { type: 'application/json' }))
+    const anchor = document.createElement('a')
+    anchor.href = href
+    anchor.download = 'kloppy-qloo-snapshot.json'
+    anchor.click()
+    URL.revokeObjectURL(href)
+  }
+
+  const useInCampaign = () => {
+    if (!result) return
+    const entities = result.results.slice(0, 6).map((entity) => {
+      const details = entity.description ? ` — ${entity.description}` : ''
+      return `- ${entity.name ?? 'Unnamed Qloo result'}${details}`
+    })
+    onAsk([
+      `Use these live Qloo results as directional cultural evidence for the current campaign.`,
+      `Capability: ${result.capability}. Source: ${result.source}.`,
+      `Interpretation boundary: ${result.interpretation}`,
+      `Qloo options, in provider order:\n${entities.join('\n') || '(No result entities were returned.)'}`,
+      `Use this evidence to inform an audience hypothesis or campaign direction, keep it separate from verified business facts, and do not claim purchase intent.`,
+    ].join('\n\n'))
+  }
+
+  const activeCapability = qlooCapabilities.find((item) => item.id === capability)!
+  const displayedResults = capability === 'on_device' && rankedSnapshot.length ? rankedSnapshot : result?.results ?? []
+  return <section className="qloo-workspace" aria-labelledby="qloo-title">
+    <header className="qloo-heading">
+      <div>
+        <span className="heading-meta"><span className="live-dot" /> Kloppy · cultural intelligence <span className="meta-divider">/</span> Built in</span>
+        <h1 id="qloo-title">Ground choices in real taste.</h1>
+        <p className="heading-copy">Qloo is part of Kloppy’s audience research by default. Its cultural-affinity signals help shape campaign hypotheses; they do not prove purchase intent or describe an individual.</p>
+      </div>
+    </header>
+
+    <nav className="qloo-capabilities" aria-label="Qloo capabilities">
+      {qlooCapabilities.map((item) => <button key={item.id} type="button" aria-pressed={capability === item.id} className={capability === item.id ? 'active' : ''} onClick={() => { setCapability(item.id); setResult(null); setError('') }}>
+        <span>{item.label}</span><small>{item.detail}</small>
+      </button>)}
+    </nav>
+
+    <div className="qloo-grid">
+      <form className="qloo-context panel" onSubmit={run}>
+        <div className="panel-head"><div><span className="section-kicker">Request context</span><h2>{activeCapability.label}</h2></div><span className="qloo-built-in">Built in</span></div>
+        <p className="qloo-form-copy">{activeCapability.detail} Results come from Qloo’s live API and stay scoped to this campaign.</p>
+        <label className="qloo-field">Starting entity or record
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. ACHA, Nike, contemporary dance" maxLength={160} />
+        </label>
+        <div className="qloo-field-grid">
+          <label className="qloo-field">Entity category
+            <select value={entityCategory} onChange={(event) => setEntityCategory(event.target.value as typeof entityCategory)}>
+              {qlooEntityCategories.map((category) => <option key={category} value={category}>{category.replace('_', ' ')}</option>)}
+            </select>
+          </label>
+          {['recommendations', 'locality', 'grounding', 'on_device'].includes(capability) && <label className="qloo-field">Explore results in
+            <select value={resultCategory} onChange={(event) => setResultCategory(event.target.value as typeof resultCategory)}>
+              {qlooEntityCategories.map((category) => <option key={category} value={category}>{category.replace('_', ' ')}</option>)}
+            </select>
+          </label>}
+        </div>
+        <label className="qloo-field">Interests <span>comma separated</span>
+          <textarea value={interestsInput} onChange={(event) => setInterestsInput(event.target.value)} placeholder="fashion, footwear, streetwear" rows={3} maxLength={800} />
+        </label>
+        <label className="qloo-field">Location <span>optional, required for locality</span>
+          <input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="City, neighborhood, or region" maxLength={160} />
+        </label>
+        <label className="qloo-field">Campaign goal <span>used as Kloppy context</span>
+          <input value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="What should this campaign help achieve?" maxLength={500} />
+        </label>
+        {error && <p className="qloo-error" role="alert">{error}</p>}
+        <button className="button primary qloo-run" type="submit" disabled={busy || (capability === 'enrichment' && !query.trim()) || (capability === 'locality' && (!location.trim() || (!query.trim() && !interests.length)))}>
+          {busy ? 'Connecting to Qloo…' : 'Run capability'} <Icon name="arrow" size={15} />
+        </button>
+      </form>
+
+      <section className="qloo-output panel" aria-live="polite" aria-busy={busy}>
+        <div className="panel-head"><div><span className="section-kicker">Grounded output</span><h2>{result ? result.source : 'Your structured result'}</h2></div>{result && <span className="qloo-source">Live Qloo source</span>}</div>
+        {!result && !busy && <div className="qloo-empty"><Icon name="insights" size={24} /><p>Choose a capability and run a request. Qloo results will appear here with their source and interpretation limits.</p></div>}
+        {busy && <div className="qloo-empty"><span className="qloo-loading" /><p>Requesting cultural-affinity data from Qloo…</p></div>}
+        {result && <>
+          <p className="qloo-interpretation">{result.interpretation}</p>
+          {result.ranking_basis && <p className="qloo-ranking">{result.ranking_basis}</p>}
+          {displayedResults.length > 0 ? <ol className="qloo-results">
+            {displayedResults.slice(0, 20).map((entity, index) => <li key={`${entity.entity_id ?? entity.name ?? 'result'}-${index}`}>
+              <span className="qloo-rank">{capability === 'on_device' ? `Local ${index + 1}` : `#${entity.rank ?? index + 1}`}</span>
+              <div><strong>{entity.name ?? 'Qloo result'}</strong>{entity.description && <p>{entity.description}</p>}
+                {entity.types?.length ? <small>{entity.types.join(' · ')}</small> : null}
+                {entity.tags?.length ? <small>{entity.tags.map((tag) => tag.name).filter(Boolean).join(' · ')}</small> : null}
+                {entity.affinity !== undefined && entity.affinity !== null && <small>Affinity {entity.affinity.toFixed(3)}{entity.affinity_rank != null ? ` · relative rank ${entity.affinity_rank.toFixed(3)}` : ''}</small>}
+                {entity.properties && Object.entries(entity.properties).filter(([key]) => ['keywords', 'genres', 'genre', 'industries', 'brand_type'].includes(key)).slice(0, 3).map(([key, value]) => <small key={key}>{key.replace('_', ' ')}: {Array.isArray(value) ? value.join(', ') : String(value)}</small>)}
+              </div>
+            </li>)}
+          </ol> : <p className="qloo-no-results">Qloo returned no matching results for this context. Try a broader entity, different interests, or another location.</p>}
+          {result.heatmap && <div className="qloo-heatmap"><h3>Locality heatmap points</h3><p>Qloo returned {result.heatmap.length} mapped points. Each point contains coordinates and provider-supplied affinity metrics.</p><ul>{result.heatmap.slice(0, 5).map((point) => <li key={`${point.latitude}-${point.longitude}`}>{point.latitude?.toFixed(4)}, {point.longitude?.toFixed(4)}{point.affinity_rank != null ? ` · affinity rank ${point.affinity_rank.toFixed(3)}` : ''}</li>)}</ul></div>}
+          {result.snapshot && <div className="qloo-snapshot-actions"><p>Snapshot retrieved from Qloo, then re-ranked in this browser using text overlap with the entered interests. Local order is not a new Qloo score.</p><button className="button secondary" type="button" onClick={downloadSnapshot}><Icon name="file" size={15} /> Download snapshot</button></div>}
+          {result.results.length > 0 && <button className="button secondary qloo-use-results" type="button" onClick={useInCampaign}><KloppyMark /> Use this evidence with Kloppy</button>}
+        </>}
+      </section>
+    </div>
+  </section>
 }
 
 function Knowledge({ onNavigate }: { onNavigate: (page: Page) => void }) {
@@ -390,6 +563,17 @@ function Knowledge({ onNavigate }: { onNavigate: (page: Page) => void }) {
       setSources((items) => [saved, ...items]); setTitle(''); setContent(''); setTextOpen(false); setAddMenuOpen(false)
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save this source.') } finally { setBusy(false) }
   }
+  const addAchaDemo = async () => {
+    if (sources.some((source) => source.title === achaDemoTitle)) return
+    setBusy(true); setError('')
+    try {
+      const saved = await request<KnowledgeSource>('/knowledge/sources', {
+        method: 'POST',
+        body: JSON.stringify({ title: achaDemoTitle, content: achaDemoContent, source_type: 'brand_text' }),
+      })
+      setSources((items) => [saved, ...items])
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add the ACHA demo brief.') } finally { setBusy(false) }
+  }
   const uploadDocument = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; event.target.value = ''
     if (!file) return
@@ -406,7 +590,7 @@ function Knowledge({ onNavigate }: { onNavigate: (page: Page) => void }) {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not remove this source.') }
   }
   return <>
-    <div className="page-heading compact"><div><div className="heading-meta">Workspace knowledge</div><h1>Give Kloppy the right context.</h1><p className="heading-copy">Save the facts, voice, and product details Kloppy should use across your campaigns.</p></div><div className="knowledge-actions"><button className="button secondary" onClick={() => onNavigate('integrations')}><Icon name="plug" size={16} /> Connect a source</button><button className="button primary" onClick={() => setAddMenuOpen(!addMenuOpen)}><Icon name="plus" size={16} /> Add a source</button></div></div>
+    <div className="page-heading compact"><div><div className="heading-meta">Workspace knowledge</div><h1>Give Kloppy the right context.</h1><p className="heading-copy">Save the facts, voice, and product details Kloppy should use across your campaigns.</p></div><div className="knowledge-actions"><button className="button secondary" onClick={() => onNavigate('integrations')}><Icon name="plug" size={16} /> Connect a source</button><button className="button secondary" type="button" onClick={() => void addAchaDemo()} disabled={busy || loading || sources.some((source) => source.title === achaDemoTitle)}>{sources.some((source) => source.title === achaDemoTitle) ? 'ACHA brief added' : 'Add ACHA demo brief'}</button><button className="button primary" onClick={() => setAddMenuOpen(!addMenuOpen)}><Icon name="plus" size={16} /> Add a source</button></div></div>
     {addMenuOpen && <div className="knowledge-add-menu"><button onClick={() => documentRef.current?.click()} disabled={busy}><Icon name="file" size={15} /> Add a document <small>PDF, DOCX, TXT, or Markdown · 8 MB max</small></button><button onClick={() => { setTextOpen(true); setAddMenuOpen(false) }}><Icon name="book" size={15} /> Add brand text <small>Save positioning, voice, product facts, and guidelines</small></button><input ref={documentRef} type="file" accept=".pdf,.docx,.txt,.md,text/plain,text/markdown,application/pdf" onChange={uploadDocument} hidden /></div>}
     {textOpen && <form className="brand-source-form panel" onSubmit={saveText}><div><h2>Add brand context</h2><p>Kloppy will use this as user-provided context in future conversations.</p></div><label>Source title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Brand voice or product facts" maxLength={200} required /></label><label>Brand information<textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Describe your brand, product, audience, claims to avoid, or preferred voice…" maxLength={100000} rows={7} required /></label><div className="brand-source-actions"><button type="button" className="button secondary" onClick={() => setTextOpen(false)}>Cancel</button><button type="submit" className="button primary" disabled={busy || !title.trim() || !content.trim()}>{busy ? 'Saving…' : 'Save source'} <Icon name="arrow" size={14} /></button></div></form>}
     {error && <div className="knowledge-error" role="alert">{error}</div>}
