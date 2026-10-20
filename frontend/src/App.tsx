@@ -24,20 +24,8 @@ const campaignNav: { label: string; page: Page; icon: IconName }[] = [
   { label: 'Launch & learn', page: 'launch', icon: 'trend' },
 ]
 
-const fallbackIntegrations = [
-  { id: 'meta-ads', name: 'Meta Ads', kind: 'Application', category: 'Paid social', description: 'Draft audiences, ads, and spend plans for Instagram and Facebook.', status: 'Available', connected: false, logo: 'M' },
-  { id: 'google-ads', name: 'Google Ads', kind: 'Application', category: 'Paid search', description: 'Prepare search and YouTube campaigns for review before launch.', status: 'Available', connected: false, logo: 'G' },
-  { id: 'hubspot', name: 'HubSpot', kind: 'Application', category: 'CRM', description: 'Use contact lists and lifecycle context to shape campaign audiences.', status: 'Available', connected: false, logo: 'H' },
-  { id: 'mailchimp', name: 'Mailchimp', kind: 'Application', category: 'Email', description: 'Create campaign drafts and send approved email journeys.', status: 'Available', connected: false, logo: 'M' },
-  { id: 'canva', name: 'Canva', kind: 'Application', category: 'Design', description: 'Hand off approved briefs and retrieve ready-to-publish brand assets.', status: 'Available', connected: false, logo: 'C' },
-  { id: 'figma', name: 'Figma', kind: 'Resource', category: 'Design files', description: 'Read campaign boards, brand systems, and feedback in one place.', status: 'Available', connected: false, logo: 'F' },
-  { id: 'google-drive', name: 'Google Drive', kind: 'Resource', category: 'Knowledge', description: 'Ground answers in briefs, research, catalogs, and past campaign files.', status: 'Available', connected: false, logo: 'D' },
-  { id: 'notion', name: 'Notion', kind: 'Resource', category: 'Knowledge', description: 'Bring launch notes, brand voice, and operating knowledge into context.', status: 'Available', connected: false, logo: 'N' },
-  { id: 'ga4', name: 'Google Analytics', kind: 'Resource', category: 'Performance', description: 'Return traffic, conversion, and content signals to the campaign loop.', status: 'Available', connected: false, logo: 'A' },
-  { id: 'shopify', name: 'Shopify', kind: 'Application', category: 'Commerce', description: 'Connect product, catalog, and storefront context for fashion launches.', status: 'Available', connected: false, logo: 'S' },
-  { id: 'qloo', name: 'Qloo', kind: 'Resource', category: 'Audience intelligence', description: 'Use taste and cultural-affinity signals as directional audience evidence.', status: 'Available', connected: false, logo: 'Q' },
-  { id: 'mcp', name: 'External MCP tools', kind: 'Resource', category: 'Agent tools', description: 'Connect allowlisted read-only tools from your configured MCP servers.', status: 'Available', connected: false, logo: 'M' },
-]
+type IntegrationItem = { id: string; name: string; kind: string; category: string; description: string; status: string; connected: boolean; server_url?: string | null; allowed_tools?: string[] }
+type KnowledgeSource = { id: string; title: string; content: string; source_type: 'brand_text' | 'document'; file_name?: string | null; created_at: string }
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
@@ -82,6 +70,19 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { detail?: string }
     throw new Error(body.detail ?? 'Request failed')
+  }
+  if (response.status === 204) return undefined as T
+  return response.json()
+}
+
+async function uploadRequest<T>(path: string, data: FormData): Promise<T> {
+  const headers = new Headers()
+  const token = localStorage.getItem('kloppy-session')
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const response = await fetch(`${API_URL}${path}`, { method: 'POST', headers, body: data })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { detail?: string }
+    throw new Error(body.detail ?? 'Upload failed')
   }
   return response.json()
 }
@@ -320,8 +321,9 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
   const startSpinOff = () => { const firstPrompt = messages.find((message) => message.role === 'user')?.text ?? ''; setSpinOffName(firstPrompt.trim().slice(0, 60)); setSpinOffOpen(true) }
   return <aside className={`assistant-panel ${fullPage ? 'full-page-chat' : ''}`}>
     <div className="assistant-head"><div><h2>What should we make true?</h2><span className="assistant-runtime"><span className="live-dot" /> {socket ? 'Live via WebSocket' : 'Ready for a message'}</span></div><button className="more-button" aria-label="Assistant options"><Icon name="dots" /></button></div>
+    {messages.length === 0 && fullPage && <section className="chat-empty-state" aria-labelledby="chat-empty-title"><span className="chat-empty-mark"><KloppyMark /></span><h1 id="chat-empty-title">{campaignId ? `What would you like to make true for ${campaignName}?` : 'What are you launching?'}</h1><p>{campaignId ? 'Share the outcome you want from this campaign. Kloppy will keep the conversation, research, and drafts in this campaign’s workspace.' : 'Tell Kloppy about the product, the people you want to reach, or the result you want to create. We’ll shape the next move together.'}</p><div className="chat-starters" aria-label="Suggested starting points">{(campaignId ? ['Shape the campaign brief', 'Find the right audience', 'Draft launch messaging'] : ['We’re launching a new product', 'Help me find the right audience', 'Shape a campaign from my brief']).map((prompt) => <button type="button" key={prompt} onClick={() => { setInput(prompt); inputRef.current?.focus() }}>{prompt}<Icon name="arrow" size={14} /></button>)}</div></section>}
     <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div>{message.role === 'agent' ? <FormattedText text={message.text} /> : <p>{message.text}</p>}{message.activities && <ActivityFeed events={message.activities} />}{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><div><ActivityFeed events={activities} live /><p className="working-copy">Kloppy is preparing your response.</p></div></div>}</div>
-    {userHasSpoken && <div className="conversation-actions"><button type="button" className="text-button" onClick={startSpinOff}><Icon name="plus" size={14} /> Spin off as a campaign</button>{spinOffOpen && <form onSubmit={(event) => { event.preventDefault(); if (spinOffName.trim()) onSpinOffCampaign?.(spinOffName.trim(), messages) }}><input aria-label="New campaign name" autoFocus value={spinOffName} onChange={(event) => setSpinOffName(event.target.value)} placeholder="Name this campaign" maxLength={200} required /><button className="button primary" type="submit"><Icon name="arrow" size={14} /> Create campaign</button><button type="button" className="text-button" onClick={() => setSpinOffOpen(false)}>Cancel</button></form>}</div>}
+    {!campaignId && userHasSpoken && <div className="conversation-actions"><button type="button" className="text-button" onClick={startSpinOff}><Icon name="plus" size={14} /> Spin off as a campaign</button>{spinOffOpen && <form onSubmit={(event) => { event.preventDefault(); if (spinOffName.trim()) onSpinOffCampaign?.(spinOffName.trim(), messages) }}><input aria-label="New campaign name" autoFocus value={spinOffName} onChange={(event) => setSpinOffName(event.target.value)} placeholder="Name this campaign" maxLength={200} required /><button className="button primary" type="submit"><Icon name="arrow" size={14} /> Create campaign</button><button type="button" className="text-button" onClick={() => setSpinOffOpen(false)}>Cancel</button></form>}</div>}
     {(files.length > 0 || contextItems.length > 0) && <div className="composer-context">{[...files, ...contextItems].map((item) => <span key={item}><Icon name={files.includes(item) ? 'file' : 'book'} size={12} /> {item}<button onClick={() => files.includes(item) ? setFiles((items) => items.filter((entry) => entry !== item)) : setContextItems((items) => items.filter((entry) => entry !== item))} aria-label={`Remove ${item}`}>×</button></span>)}</div>}
     {menuOpen && <div className="composer-menu"><label className="menu-action"><Icon name="file" size={15} /> Add files<input type="file" multiple onChange={addFile} /></label><button className={contextItems.includes('Brand knowledge') ? 'selected' : ''} onClick={() => addContext('Brand knowledge')}><Icon name="book" size={15} /> Brand knowledge</button><button className={contextItems.includes('Campaign skills') ? 'selected' : ''} onClick={() => addContext('Campaign skills')}><Icon name="spark" size={15} /> Campaign skills</button></div>}
     <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}><div className="composer-main"><button type="button" className={`composer-plus ${menuOpen ? 'active' : ''}`} aria-label="Add files, knowledge, or skills" onClick={() => setMenuOpen(!menuOpen)}><Icon name="plus" size={18} /></button><textarea ref={inputRef} aria-label="Ask Kloppy" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} placeholder="Ask Kloppy…" rows={1} /><button type="submit" className="composer-send" aria-label="Send message" disabled={!input.trim() || busy}><Icon name="send" size={17} /></button></div><div className="composer-controls"><label className="composer-select"><Icon name="lock" size={13} /><select aria-label="Permission policy" value={permission} onChange={(e) => void savePermissionPolicy(e.target.value as PermissionPolicy)}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label></div></form>
@@ -352,7 +354,10 @@ function Overview({ campaignName, onNavigate }: { campaignName: string; onNaviga
 
 function CampaignList({ campaigns, onCreate, onOpen }: { campaigns: Campaign[]; onCreate: (name: string) => void; onOpen: (campaign: Campaign) => void }) {
   const [name, setName] = useState('')
-  return <><div className="page-heading compact"><div><div className="heading-meta">Campaign workspaces</div><h1>Every campaign has its own room.</h1><p className="heading-copy">Each campaign keeps a separate name, conversation, and working context.</p></div></div><form className="panel campaign-create" onSubmit={(event) => { event.preventDefault(); if (name.trim()) { onCreate(name.trim()); setName('') } }}><label htmlFor="campaign-name">Start a named campaign</label><div><input id="campaign-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Spring product launch" maxLength={200} required /><button className="button primary" type="submit"><Icon name="plus" size={16} /> Create campaign</button></div></form><section className="campaign-list" aria-label="Your campaigns">{campaigns.length ? campaigns.map((campaign) => <button className="campaign-list-item panel" key={campaign.id} onClick={() => onOpen(campaign)}><span className="integration-icon"><Icon name="campaigns" size={20} /></span><span><small>Campaign workspace</small><strong>{campaign.name}</strong><small>Created {new Date(campaign.createdAt).toLocaleDateString()}</small></span><Icon name="arrow" size={16} /></button>) : <div className="panel campaign-empty"><span className="section-kicker">No campaigns yet</span><h2>Name the first one to get started.</h2><p>Your campaign chat and decisions will be saved under its name.</p></div>}</section></>
+  const [createOpen, setCreateOpen] = useState(false)
+  const createInput = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (createOpen) createInput.current?.focus() }, [createOpen])
+  return <><div className="page-heading compact campaigns-heading"><div><div className="heading-meta">Campaign workspaces</div><h1>Every campaign has its own room.</h1><p className="heading-copy">Each campaign keeps a separate name, conversation, and working context.</p></div><div className="campaign-create-anchor"><button className="button primary campaign-create-trigger" type="button" aria-expanded={createOpen} aria-controls="campaign-create-popover" onClick={() => setCreateOpen((open) => !open)}><Icon name="plus" size={16} /><span>Create new campaign</span></button>{createOpen && <form id="campaign-create-popover" className="campaign-create-popover" onSubmit={(event) => { event.preventDefault(); if (name.trim()) { onCreate(name.trim()); setName(''); setCreateOpen(false) } }}><h2>Give this campaign a name.</h2><label htmlFor="campaign-name">Campaign name</label><input ref={createInput} id="campaign-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Spring product launch" maxLength={200} required /><div className="campaign-create-actions"><button className="button secondary" type="button" onClick={() => { setCreateOpen(false); setName('') }}>Cancel</button><button className="button primary" type="submit" disabled={!name.trim()}><Icon name="plus" size={15} /> Create campaign</button></div></form>}</div></div><section className="campaign-list" aria-label="Your campaigns">{campaigns.length ? campaigns.map((campaign) => <button className="campaign-list-item panel" key={campaign.id} onClick={() => onOpen(campaign)}><span className="integration-icon"><Icon name="campaigns" size={20} /></span><span><small>Campaign workspace</small><strong>{campaign.name}</strong><small>Created {new Date(campaign.createdAt).toLocaleDateString()}</small></span><Icon name="arrow" size={16} /></button>) : <div className="panel campaign-empty"><span className="section-kicker">No campaigns yet</span><h2>Name the first one to get started.</h2><p>Your campaign chat and decisions will be saved under its name.</p></div>}</section></>
 }
 
 function StagePage({ page, onAsk, onCampaignOpen, searchQuery = '' }: { page: 'campaigns' | 'audience' | 'strategy' | 'launch'; onAsk: (prompt: string) => void; onCampaignOpen?: () => void; searchQuery?: string }) {
@@ -367,16 +372,98 @@ function StagePage({ page, onAsk, onCampaignOpen, searchQuery = '' }: { page: 'c
 }
 
 function Knowledge({ onNavigate }: { onNavigate: (page: Page) => void }) {
-  return <><div className="page-heading compact"><div><div className="heading-meta">Knowledge library</div><h1>Give Kloppy the right context.</h1><p className="heading-copy">Connect a trusted source for brand facts and guidance. Campaign-specific decisions stay inside each campaign.</p></div><button className="button primary" onClick={() => onNavigate('integrations')}><Icon name="plug" size={16} /> Connect a source</button></div><div className="knowledge-layout"><section className="knowledge-empty panel"><div className="knowledge-empty-mark"><Icon name="book" size={23} /></div><span className="section-kicker">No sources connected</span><h2>Your workspace knowledge will appear here.</h2><p>Connect Google Drive or Notion from Integrations to bring in approved business context. No sample notes are being used.</p><button className="text-button" onClick={() => onNavigate('integrations')}>View available sources <Icon name="arrow" size={14} /></button></section><aside className="knowledge-aside"><span className="section-kicker">How Kloppy uses this</span><h2>Context before confidence.</h2><p>Connected business facts can inform campaigns. Decisions, drafts, and conversations remain scoped to their campaign.</p><div className="knowledge-rule"><Icon name="check" size={15} /><span>Sources must be connected first</span></div><div className="knowledge-rule"><Icon name="check" size={15} /><span>Campaign work stays separate</span></div></aside></div></>
+  const [sources, setSources] = useState<KnowledgeSource[]>([])
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
+  const [textOpen, setTextOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [content, setContent] = useState('')
+  const documentRef = useRef<HTMLInputElement>(null)
+  const refresh = () => request<KnowledgeSource[]>('/knowledge/sources').then(setSources)
+  useEffect(() => { refresh().catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not load brand sources.')).finally(() => setLoading(false)) }, [])
+  const saveText = async (event: FormEvent) => {
+    event.preventDefault(); setBusy(true); setError('')
+    try {
+      const saved = await request<KnowledgeSource>('/knowledge/sources', { method: 'POST', body: JSON.stringify({ title, content, source_type: 'brand_text' }) })
+      setSources((items) => [saved, ...items]); setTitle(''); setContent(''); setTextOpen(false); setAddMenuOpen(false)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save this source.') } finally { setBusy(false) }
+  }
+  const uploadDocument = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]; event.target.value = ''
+    if (!file) return
+    setBusy(true); setError('')
+    const data = new FormData(); data.append('file', file)
+    try {
+      const saved = await uploadRequest<KnowledgeSource>('/knowledge/sources/document', data)
+      setSources((items) => [saved, ...items]); setAddMenuOpen(false)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not upload this document.') } finally { setBusy(false) }
+  }
+  const removeSource = async (id: string) => {
+    setError('')
+    try { await request<void>(`/knowledge/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }); setSources((items) => items.filter((item) => item.id !== id)) }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not remove this source.') }
+  }
+  return <>
+    <div className="page-heading compact"><div><div className="heading-meta">Workspace knowledge</div><h1>Give Kloppy the right context.</h1><p className="heading-copy">Save the facts, voice, and product details Kloppy should use across your campaigns.</p></div><div className="knowledge-actions"><button className="button secondary" onClick={() => onNavigate('integrations')}><Icon name="plug" size={16} /> Connect a source</button><button className="button primary" onClick={() => setAddMenuOpen(!addMenuOpen)}><Icon name="plus" size={16} /> Add a source</button></div></div>
+    {addMenuOpen && <div className="knowledge-add-menu"><button onClick={() => documentRef.current?.click()} disabled={busy}><Icon name="file" size={15} /> Add a document <small>PDF, DOCX, TXT, or Markdown · 8 MB max</small></button><button onClick={() => { setTextOpen(true); setAddMenuOpen(false) }}><Icon name="book" size={15} /> Add brand text <small>Save positioning, voice, product facts, and guidelines</small></button><input ref={documentRef} type="file" accept=".pdf,.docx,.txt,.md,text/plain,text/markdown,application/pdf" onChange={uploadDocument} hidden /></div>}
+    {textOpen && <form className="brand-source-form panel" onSubmit={saveText}><div><h2>Add brand context</h2><p>Kloppy will use this as user-provided context in future conversations.</p></div><label>Source title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Brand voice or product facts" maxLength={200} required /></label><label>Brand information<textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Describe your brand, product, audience, claims to avoid, or preferred voice…" maxLength={100000} rows={7} required /></label><div className="brand-source-actions"><button type="button" className="button secondary" onClick={() => setTextOpen(false)}>Cancel</button><button type="submit" className="button primary" disabled={busy || !title.trim() || !content.trim()}>{busy ? 'Saving…' : 'Save source'} <Icon name="arrow" size={14} /></button></div></form>}
+    {error && <div className="knowledge-error" role="alert">{error}</div>}
+    <div className="knowledge-layout"><section className="knowledge-sources"><div className="knowledge-list-heading"><h2>Saved sources</h2><span>{sources.length} {sources.length === 1 ? 'source' : 'sources'}</span></div>{loading ? <div className="knowledge-empty panel">Loading saved sources…</div> : sources.length ? sources.map((source) => <article className="knowledge-source panel" key={source.id}><div className="knowledge-source-head"><div><span className="section-kicker">{source.source_type === 'document' ? 'Document' : 'Brand notes'}</span><h3>{source.title}</h3>{source.file_name && <small>{source.file_name}</small>}</div><button className="text-button" type="button" onClick={() => void removeSource(source.id)} aria-label={`Remove ${source.title}`}>Remove</button></div><details><summary>View saved content</summary><p>{source.content}</p></details></article>) : <section className="knowledge-empty panel"><div className="knowledge-empty-mark"><Icon name="book" size={23} /></div><h2>No sources saved yet.</h2><p>Add a document or write down the brand context Kloppy should carry between conversations. Saved sources are private to your account.</p></section>}</section><aside className="knowledge-aside"><span className="section-kicker">How Kloppy uses this</span><h2>Context before confidence.</h2><p>Saved brand material informs Kloppy’s responses. It stays separate from verified external evidence and campaign results.</p><div className="knowledge-rule"><Icon name="check" size={15} /><span>Sources are private to your account</span></div><div className="knowledge-rule"><Icon name="check" size={15} /><span>Remove outdated details any time</span></div></aside></div>
+  </>
 }
 
 function Integrations({ searchQuery = '' }: { searchQuery?: string }) {
-  const [items, setItems] = useState(fallbackIntegrations)
+  const [items, setItems] = useState<IntegrationItem[]>([])
   const [filter, setFilter] = useState<'All' | 'Applications' | 'Resources'>('All')
-  const [setupOpen, setSetupOpen] = useState(false)
-  useEffect(() => { request<typeof fallbackIntegrations>('/integrations').then((remote) => { const remoteById = new Map(remote.map((item) => [item.id, item])); setItems(fallbackIntegrations.map((fallback) => ({ ...fallback, ...(remoteById.get(fallback.id) ?? {}) }))) }).catch(() => undefined) }, [])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [target, setTarget] = useState<IntegrationItem | 'custom' | null>(null)
+  const [name, setName] = useState('')
+  const [serverUrl, setServerUrl] = useState('')
+  const [accessToken, setAccessToken] = useState('')
+  const [toolOptions, setToolOptions] = useState<string[]>([])
+  const [selectedTools, setSelectedTools] = useState<string[]>([])
+  const [saving, setSaving] = useState(false)
+  const [discovering, setDiscovering] = useState(false)
+  const refresh = () => request<IntegrationItem[]>('/integrations').then(setItems)
+  useEffect(() => { refresh().catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not load integrations.')).finally(() => setLoading(false)) }, [])
+  const openConnection = (item: IntegrationItem | 'custom') => {
+    setTarget(item); setError(''); setToolOptions([]); setSelectedTools([]); setAccessToken('')
+    if (item === 'custom') { setName(''); setServerUrl('') }
+    else { setName(item.name); setServerUrl(item.server_url ?? ''); setSelectedTools(item.allowed_tools ?? []) }
+  }
+  const discover = async () => {
+    setDiscovering(true); setError('')
+    try {
+      const result = await request<{ read_only_tools: string[] }>('/integrations/discover', { method: 'POST', body: JSON.stringify({ server_url: serverUrl, access_token: accessToken || null }) })
+      setToolOptions(result.read_only_tools); setSelectedTools((current) => current.filter((tool) => result.read_only_tools.includes(tool)))
+      if (!result.read_only_tools.length) setError('This MCP server did not advertise any read-only tools.')
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not inspect this server.') } finally { setDiscovering(false) }
+  }
+  const saveConnection = async (event: FormEvent) => {
+    event.preventDefault(); setSaving(true); setError('')
+    try {
+      const payload = { name: name || undefined, server_url: serverUrl, access_token: accessToken || null, allowed_tools: selectedTools }
+      const isCustom = target === 'custom' || (target !== null && typeof target === 'object' && target.id.startsWith('custom-'))
+      const path = isCustom ? '/integrations/custom' : `/integrations/${encodeURIComponent(target !== null && typeof target === 'object' ? target.id : '')}/connect`
+      await request<IntegrationItem>(path, { method: 'POST', body: JSON.stringify(payload) })
+      await refresh(); setTarget(null)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not connect this service.') } finally { setSaving(false) }
+  }
+  const disconnect = async (item: IntegrationItem) => {
+    setError('')
+    try { await request<void>(`/integrations/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); await refresh() }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not disconnect this service.') }
+  }
   const visible = items.filter((item) => (filter === 'All' || item.kind === filter.slice(0, -1)) && (!searchQuery.trim() || `${item.name} ${item.category} ${item.description}`.toLowerCase().includes(searchQuery.toLowerCase())))
-  return <><div className="page-heading compact"><div><h1>Let Kloppy work<br />where work already happens.</h1><p className="heading-copy">Connect tools through backend credentials and MCP servers. Kloppy reports which providers are configured and only calls explicitly allowlisted tools.</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setSetupOpen(!setupOpen)}><Icon name="plug" size={15} /> MCP setup</button></div></div>{setupOpen && <section className="custom-connector mcp-setup"><div><span className="section-kicker">Backend configuration</span><h2>Give Kloppy a scoped tool belt.</h2><p>Configure Qloo plus the provider MCP servers you want to use. Supported services include Meta Ads, Google Ads, HubSpot, Mailchimp, Canva, Figma, Google Drive, Notion, GA4, and Shopify. Each must have a working endpoint, its required authentication, and an explicit tool allowlist in backend/.env. Kloppy only calls tools actually connected and exposed to the agent.</p></div><div className="mcp-setup-fields"><code>QLOO_API_KEY=…</code><code>MCP_SERVERS_JSON={'{'}"mcpServers":{'{'}"google_drive":{'{'}"url":"https://…","allowed_tools":["search_files"]{'}'}{'}'}{'}'}</code><span>Restart the backend after changing these values. The generic MCP client is in place; provider endpoints and credentials still need to be supplied per service.</span></div></section>}<div className="connector-toolbar"><div className="filter-tabs">{(['All', 'Applications', 'Resources'] as const).map((option) => <button className={filter === option ? 'active' : ''} key={option} onClick={() => setFilter(option)}>{option}<span>{option === 'All' ? items.length : items.filter((item) => item.kind === option.slice(0, -1)).length}</span></button>)}</div></div><div className="connector-grid">{visible.length ? visible.map((item) => <article className="connector-card" key={item.id}><div className="connector-card-head"><div className={`connector-logo logo-${item.id}`}>{item.logo}</div><span className={`connector-status ${item.connected ? 'connected' : ''}`}><span />{item.status === 'Configured' ? 'Configured' : item.connected ? 'Connected' : 'Setup needed'}</span></div><span className="integration-category">{item.kind} · {item.category}</span><h2>{item.name}</h2><p>{item.description}</p><div className="connector-card-foot"><span className="connector-scope">{item.connected ? 'Server-side credentials' : 'Not configured'}</span><button className="button secondary" disabled={!item.connected} onClick={() => setSetupOpen(true)}>{item.connected ? 'View setup' : 'Setup needed'}</button></div></article>) : <div className="connector-empty">No connectors match “{searchQuery}”. Try a provider, capability, or category.</div>}</div></>
+  return <><div className="page-heading compact"><div><h1>Connect the tools Kloppy uses.</h1><p className="heading-copy">Connect an MCP server to share its read-only tools with Kloppy. Each connection is verified and saved securely to your account.</p></div><button className="button primary" onClick={() => openConnection('custom')}><Icon name="plus" size={16} /> Add custom</button></div>
+    {error && <div className="knowledge-error" role="alert">{error}</div>}
+    {target && <form className="mcp-connect-form panel" onSubmit={saveConnection}><div className="mcp-connect-heading"><div><span className="section-kicker">{target === 'custom' ? 'Custom server' : target.connected ? 'Manage connection' : 'New connection'}</span><h2>{target === 'custom' ? 'Add a custom MCP server.' : `Connect ${target.name}.`}</h2></div><button type="button" className="text-button" onClick={() => setTarget(null)}>Close</button></div>{target === 'custom' && <label>Connection name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Internal research" maxLength={100} required /></label>}<label>MCP server URL<input type="url" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://provider.example/mcp" required /></label><label>Bearer token <span className="field-note">Optional. Encrypted before storage; leave blank for a public server.</span><input type="password" value={accessToken} onChange={(event) => setAccessToken(event.target.value)} autoComplete="new-password" placeholder="Paste a provider token" /></label><div className="mcp-discover-row"><button type="button" className="button secondary" onClick={() => void discover()} disabled={!serverUrl || discovering}>{discovering ? 'Checking server…' : 'Find read-only tools'}</button><span>Kloppy only enables tools marked read-only by the MCP server.</span></div>{toolOptions.length > 0 && <fieldset className="mcp-tool-options"><legend>Choose tools to enable</legend>{toolOptions.map((tool) => <label key={tool}><input type="checkbox" checked={selectedTools.includes(tool)} onChange={(event) => setSelectedTools((current) => event.target.checked ? [...current, tool] : current.filter((name) => name !== tool))} /> <code>{tool}</code></label>)}</fieldset>}{target !== 'custom' && target.allowed_tools?.length && toolOptions.length === 0 && <p className="field-note">Saved tools: {target.allowed_tools.join(', ')}. Find tools again to change them.</p>}<div className="brand-source-actions"><button type="button" className="button secondary" onClick={() => setTarget(null)}>Cancel</button><button type="submit" className="button primary" disabled={saving || !toolOptions.length || !selectedTools.length || (target === 'custom' && !name.trim())}>{saving ? 'Verifying…' : 'Connect'} <Icon name="arrow" size={14} /></button></div></form>}
+    <div className="connector-toolbar"><div className="filter-tabs">{(['All', 'Applications', 'Resources'] as const).map((option) => <button className={filter === option ? 'active' : ''} key={option} onClick={() => setFilter(option)}>{option}<span>{option === 'All' ? items.length : items.filter((item) => item.kind === option.slice(0, -1)).length}</span></button>)}</div></div>
+    {loading ? <div className="connector-empty">Loading connected services…</div> : <div className="connector-grid">{visible.length ? visible.map((item) => <article className="connector-card" key={item.id}><div className="connector-card-head"><div className={`connector-logo logo-${item.id}`}>{item.name.slice(0, 1).toUpperCase()}</div><span className={`connector-status ${item.connected ? 'connected' : ''}`}><span />{item.connected ? 'Connected' : 'Not connected'}</span></div><span className="integration-category">{item.kind} · {item.category}</span><h2>{item.name}</h2><p>{item.description}</p><div className="connector-card-foot"><span className="connector-scope">{item.connected ? `${item.allowed_tools?.length ?? 0} read-only tools enabled` : 'MCP endpoint required'}</span><div><button className="button secondary" onClick={() => openConnection(item)}>{item.connected ? 'Manage' : 'Connect'}</button>{item.connected && <button className="text-button disconnect-button" onClick={() => void disconnect(item)}>Disconnect</button>}</div></div></article>) : <div className="connector-empty">{searchQuery.trim() ? `No services match “${searchQuery}”.` : 'No tools are available.'}</div>}</div>}
+  </>
 }
 
 function Settings() {

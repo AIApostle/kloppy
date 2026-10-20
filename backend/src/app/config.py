@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     frontend_origin: str = "http://localhost:5173"
     frontend_origins: str = "https://kloppy.vercel.app"
-    environment: str = "development"
+    environment: str = "production"
     supabase_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("SUPABASE_PROJECT_URL", "SUPABASE_URL"),
@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     qloo_api_key: str | None = None
     qloo_base_url: str = "https://api.qloo.com"
     mcp_servers_json: str | None = None
+    integration_encryption_key: str | None = None
     strands_model_id: str = "openrouter/free"
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"

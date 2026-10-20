@@ -1,6 +1,6 @@
-"""Integration response and mutation contracts."""
+"""Integration and MCP connection contracts."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Integration(BaseModel):
@@ -11,7 +11,17 @@ class Integration(BaseModel):
     description: str
     status: str
     connected: bool
+    server_url: str | None = None
+    allowed_tools: list[str] = Field(default_factory=list)
 
 
-class IntegrationUpdate(BaseModel):
-    connected: bool
+class MCPConnectionCreate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    server_url: str = Field(min_length=8, max_length=2048)
+    access_token: str | None = Field(default=None, max_length=4096)
+    allowed_tools: list[str] = Field(min_length=1, max_length=40)
+
+
+class MCPDiscoveryRequest(BaseModel):
+    server_url: str = Field(min_length=8, max_length=2048)
+    access_token: str | None = Field(default=None, max_length=4096)

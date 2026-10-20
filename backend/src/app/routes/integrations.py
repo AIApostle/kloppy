@@ -1,63 +1,150 @@
-"""Third-party connection routes."""
+"""Authenticated integration catalog and MCP connection routes."""
 
-import json
-from urllib.parse import urlparse
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
 from ..data import INTEGRATIONS
-from ..config import settings
-from ..schemas.integrations import Integration, IntegrationUpdate
+from ..schemas.integrations import Integration, MCPConnectionCreate, MCPDiscoveryRequest
+from ..services.mcp_connections import (
+    MCPConnectionError,
+    delete_connection,
+    discover_read_only_tools,
+    list_connections,
+    save_connection,
+)
+from ..services.user_settings import SettingsAuthenticationError, SettingsStoreError
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
+def _token(authorization: str | None) -> str:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return authorization[7:].strip()
+
+
+def _raise(error: Exception) -> None:
+    if isinstance(error, SettingsAuthenticationError):
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    if isinstance(error, SettingsStoreError):
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    if isinstance(error, MCPConnectionError):
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.get("", response_model=list[Integration])
-def list_integrations() -> list[Integration]:
-    items = [dict(item) for item in INTEGRATIONS]
-    configured_mcp: list[str] = []
-    if settings.mcp_servers_json:
-        try:
-            raw = json.loads(settings.mcp_servers_json)
-            servers = raw.get("mcpServers", raw) if isinstance(raw, dict) else {}
-            configured_mcp = [
-                str(name)
-                for name, server in servers.items()
-                for parsed in [urlparse(server.get("url", "")) if isinstance(server, dict) else None]
-                if isinstance(server, dict)
-                and server.get("allowed_tools")
-                and parsed
-                and (parsed.scheme == "https" or (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}))
-            ]
-        except (json.JSONDecodeError, AttributeError):
-            configured_mcp = []
-    for item in items:
-        configured_names = {name.lower().replace("-", "_").replace(" ", "_") for name in configured_mcp}
-        provider_aliases = {
-            "meta_ads": "meta-ads",
-            "google_ads": "google-ads",
-            "google_drive": "google-drive",
-            "google_analytics": "ga4",
-        }
-        configured_provider = item["id"] in configured_mcp or item["id"] in {
-            provider_aliases.get(name, name.replace("_", "-")) for name in configured_names
-        }
-        if item["id"] == "qloo" and (settings.qloo_api_key or "qloo" in configured_names):
-            item.update(status="Configured", connected=True)
-        elif item["id"] not in {"mcp", "qloo"} and configured_provider:
-            item.update(status="Configured", connected=True)
-        elif item["id"] == "mcp" and configured_mcp:
-            item.update(
-                status="Configured",
-                connected=True,
-                description=f"Allowlisted read-only tools from {', '.join(configured_mcp)}.",
+def get_integrations(authorization: str | None = Header(default=None)) -> list[Integration]:
+    try:
+        connections = {item["provider"]: item for item in list_connections(_token(authorization))}
+        catalog = [item for item in INTEGRATIONS if item["id"] not in {"qloo", "mcp"}]
+        output: list[Integration] = []
+        for item in catalog:
+            connected = item["id"] in connections
+            output.append(
+                Integration(
+                    **{
+                        **item,
+                        "status": "Connected" if connected else "Setup needed",
+                        "connected": connected,
+                        "description": (
+                            f"Connected through an MCP server. Read-only tools: {', '.join(connections[item['id']]['allowed_tools'])}."
+                            if connected
+                            else item["description"]
+                        ),
+                        "server_url": connections[item["id"]]["server_url"] if connected else None,
+                        "allowed_tools": connections[item["id"]]["allowed_tools"] if connected else [],
+                    }
+                )
             )
-    return [Integration(**item) for item in items]
+        for provider, connection in connections.items():
+            if provider.startswith("custom-"):
+                output.append(
+                    Integration(
+                        id=provider,
+                        name=connection["display_name"],
+                        kind="Resource",
+                        category="Custom MCP",
+                        description=f"Connected MCP server. Read-only tools: {', '.join(connection['allowed_tools'])}.",
+                        status="Connected",
+                        connected=True,
+                        server_url=connection["server_url"],
+                        allowed_tools=connection["allowed_tools"],
+                    )
+                )
+        return output
+    except (SettingsAuthenticationError, SettingsStoreError) as error:
+        _raise(error)
+        raise AssertionError("unreachable")
 
 
-@router.patch("/{integration_id}", response_model=Integration)
-def update_integration(integration_id: str, payload: IntegrationUpdate) -> Integration:
-    raise HTTPException(
-        status_code=409,
-        detail="Connection state reflects backend credentials and MCP configuration; use the backend environment to configure providers.",
-    )
+@router.post("/discover")
+def discover_tools(payload: MCPDiscoveryRequest, authorization: str | None = Header(default=None)) -> dict[str, list[str]]:
+    try:
+        from ..services.user_settings import _user_id
+
+        _user_id(_token(authorization))
+        return {"read_only_tools": discover_read_only_tools(payload.server_url, payload.access_token)}
+    except (SettingsAuthenticationError, SettingsStoreError, MCPConnectionError) as error:
+        _raise(error)
+        raise AssertionError("unreachable")
+
+
+@router.post("/custom", response_model=Integration)
+def add_custom_connection(
+    payload: MCPConnectionCreate,
+    authorization: str | None = Header(default=None),
+) -> Integration:
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Give this custom connection a name.")
+    try:
+        provider = "custom-" + name.lower().replace(" ", "-")
+        saved = save_connection(
+            _token(authorization), provider, name, payload.server_url,
+            payload.access_token, payload.allowed_tools,
+        )
+        return Integration(
+            id=saved["provider"], name=saved["display_name"], kind="Resource",
+            category="Custom MCP", description=f"Connected and verified read-only tools: {', '.join(saved['verified_tools'])}.",
+            status="Connected", connected=True,
+            server_url=saved["server_url"], allowed_tools=saved["allowed_tools"],
+        )
+    except (SettingsAuthenticationError, SettingsStoreError, MCPConnectionError) as error:
+        _raise(error)
+        raise AssertionError("unreachable")
+
+
+@router.post("/{integration_id}/connect", response_model=Integration)
+def connect_integration(
+    integration_id: str,
+    payload: MCPConnectionCreate,
+    authorization: str | None = Header(default=None),
+) -> Integration:
+    item = next((entry for entry in INTEGRATIONS if entry["id"] == integration_id), None)
+    if not item or integration_id in {"qloo", "mcp"}:
+        raise HTTPException(status_code=404, detail="Choose a supported integration.")
+    try:
+        saved = save_connection(
+            _token(authorization), integration_id, item["name"], payload.server_url,
+            payload.access_token, payload.allowed_tools,
+        )
+        return Integration(
+            **{
+                **item,
+                "status": "Connected",
+                "connected": True,
+                "description": f"Connected and verified read-only tools: {', '.join(saved['verified_tools'])}.",
+                "server_url": saved["server_url"],
+                "allowed_tools": saved["allowed_tools"],
+            }
+        )
+    except (SettingsAuthenticationError, SettingsStoreError, MCPConnectionError) as error:
+        _raise(error)
+        raise AssertionError("unreachable")
+
+
+@router.delete("/{integration_id}", status_code=204)
+def disconnect_integration(integration_id: str, authorization: str | None = Header(default=None)) -> None:
+    try:
+        delete_connection(_token(authorization), integration_id)
+    except (SettingsAuthenticationError, SettingsStoreError) as error:
+        _raise(error)

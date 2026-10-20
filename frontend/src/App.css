@@ -295,6 +295,58 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
   .landing-proof { flex-wrap: wrap; overflow: visible; }
   .landing-proof > span { min-width: calc(50% - 10px); }
 }
+
+/* Saved knowledge and verified MCP connections. */
+.knowledge-actions { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+.knowledge-add-menu { display:flex; align-items:stretch; gap:9px; margin:-8px 0 22px auto; width:min(520px,100%); padding:10px; border:1px solid var(--line); background:var(--paper); box-shadow:0 12px 28px #27302c12; }
+.knowledge-add-menu button { display:grid; grid-template-columns:18px 1fr; align-content:center; column-gap:9px; row-gap:4px; flex:1; min-height:68px; padding:11px; color:var(--ink); border:1px solid var(--line); background:var(--cream); text-align:left; font-size:12px; font-weight:600; }
+.knowledge-add-menu button svg { grid-row:span 2; color:var(--coral-dark); }
+.knowledge-add-menu button small { color:var(--ink-soft); font-size:10px; font-weight:400; line-height:1.4; }
+.brand-source-form,.mcp-connect-form { display:grid; gap:16px; margin:0 0 26px; padding:23px; border:1px solid var(--line); background:var(--paper); }
+.brand-source-form h2,.mcp-connect-form h2 { color:var(--ink); font-size:21px; }
+.brand-source-form p { margin-top:5px; color:var(--ink-soft); font-size:12px; }
+.brand-source-form label,.mcp-connect-form>label { display:grid; gap:7px; color:var(--ink); font-size:11px; font-weight:600; }
+.brand-source-form input,.brand-source-form textarea,.mcp-connect-form input:not([type=checkbox]) { width:100%; min-width:0; padding:10px 11px; color:var(--ink); border:1px solid #c9c9c0; border-radius:4px; background:white; font:400 13px/1.5 var(--sans,'DM Sans',sans-serif); }
+.brand-source-form textarea { resize:vertical; }
+.brand-source-actions { display:flex; justify-content:flex-end; gap:9px; }
+.knowledge-error { margin:0 0 18px; padding:12px 14px; color:#854f45; border:1px solid #e7c9bd; background:#fbf0eb; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.knowledge-sources { display:grid; align-content:start; gap:11px; min-width:0; }
+.knowledge-list-heading { display:flex; align-items:baseline; justify-content:space-between; margin:0 0 3px; }
+.knowledge-list-heading h2 { color:var(--ink); font-size:19px; }
+.knowledge-list-heading span,.knowledge-source-head small { color:var(--muted); font-family:var(--mono); font-size:10px; }
+.knowledge-source { display:grid; gap:14px; padding:19px; }
+.knowledge-source-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.knowledge-source-head h3 { margin-top:5px; color:var(--ink); font-size:16px; overflow-wrap:anywhere; }
+.knowledge-source-head small { display:block; margin-top:5px; overflow-wrap:anywhere; }
+.knowledge-source details { border-top:1px solid var(--line); padding-top:11px; }
+.knowledge-source summary { color:var(--ink-soft); cursor:pointer; font-size:11px; }
+.knowledge-source details p { max-height:260px; margin-top:10px; overflow:auto; color:var(--ink-soft); font-size:12px; line-height:1.65; white-space:pre-wrap; overflow-wrap:anywhere; }
+.mcp-connect-heading { display:flex; justify-content:space-between; gap:15px; align-items:flex-start; }
+.mcp-connect-heading h2 { margin-top:5px; }
+.field-note,.mcp-discover-row span { color:var(--ink-soft); font-size:10px; font-weight:400; line-height:1.5; }
+.mcp-discover-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.mcp-tool-options { display:flex; gap:8px 16px; flex-wrap:wrap; min-width:0; margin:0; padding:13px; border:1px solid var(--line); }
+.mcp-tool-options legend { padding:0 5px; color:var(--ink); font-size:11px; font-weight:600; }
+.mcp-tool-options label { display:flex; align-items:center; gap:7px; max-width:100%; color:var(--ink-soft); font-size:11px; }
+.mcp-tool-options input { accent-color:var(--coral-dark); }
+.mcp-tool-options code { overflow-wrap:anywhere; color:var(--ink); font:11px var(--mono); }
+.connector-card-foot>div { display:flex; align-items:center; gap:10px; }
+.disconnect-button { padding:6px 0; color:#86594f; border:0; background:transparent; font-size:10px; }
+.disconnect-button:hover { text-decoration:underline; text-underline-offset:3px; }
+@media(max-width:820px) {
+  .knowledge-actions { width:100%; }
+  .knowledge-actions .button { flex:1; justify-content:center; }
+  .knowledge-add-menu { width:100%; margin-left:0; }
+  .brand-source-form,.mcp-connect-form { padding:17px; }
+  .connector-card-foot>div { width:100%; justify-content:space-between; }
+}
+@media(max-width:480px) {
+  .knowledge-add-menu { flex-direction:column; }
+  .knowledge-add-menu button { min-height:60px; }
+  .brand-source-actions { flex-direction:column-reverse; }
+  .brand-source-actions .button { justify-content:center; }
+  .mcp-discover-row .button { width:100%; justify-content:center; }
+}
 @media (max-width: 360px) {
   .sidebar { padding-right: 8px; padding-left: 8px; }
   .nav-item { gap: 3px; }
@@ -389,4 +441,43 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
   .conversation-actions form { flex-wrap: wrap; }
   .conversation-actions input { flex-basis: 100%; }
   .conversation-actions .button { flex: 1; justify-content: center; }
+}
+
+/* Empty state gives the Kloppy workspace a clear first action without adding clutter. */
+.chat-empty-state{display:flex;min-height:min(62vh,520px);align-items:center;flex-direction:column;justify-content:center;padding:30px 20px 46px;text-align:center}
+.chat-empty-mark{display:grid;width:42px;height:42px;place-items:center;margin-bottom:21px;border:1px solid #ecd0c7;border-radius:50%;background:var(--coral-wash)}
+.chat-empty-mark .brand-k{font-size:30px}
+.chat-empty-state h1{max-width:700px;font-family:var(--serif);font-size:clamp(36px,4.2vw,54px);line-height:1.02;letter-spacing:-.045em}
+.chat-empty-state p{max-width:520px;margin-top:16px;color:var(--ink-soft);font-size:14px;line-height:1.65}
+.chat-starters{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:25px}
+.chat-starters button{display:inline-flex;min-height:42px;align-items:center;gap:10px;padding:0 13px;color:var(--ink);border:1px solid #d9d8d0;border-radius:999px;background:var(--paper);font-size:12px;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+.chat-starters button svg{color:var(--coral-dark)}
+.chat-starters button:hover{transform:translateY(-1px);border-color:#e2a99c;background:#fff8f4}
+.chat-starters button:focus-visible,.campaign-create-trigger:focus-visible,.campaign-create-popover button:focus-visible,.campaign-create-popover input:focus-visible{outline:3px solid #e2675270;outline-offset:2px}
+
+/* Keep campaign creation in the page header and reveal its form on demand. */
+.campaigns-heading{position:relative;align-items:flex-start}
+.campaign-create-anchor{position:relative;flex:0 0 auto;margin-left:auto}
+.campaign-create-trigger{min-height:44px;padding:0 17px;border-radius:999px;font-size:12px}
+.campaign-create-popover{position:absolute;top:calc(100% + 10px);right:0;z-index:20;display:grid;width:min(360px,calc(100vw - 42px));gap:10px;padding:22px;border:1px solid var(--line);border-radius:18px;background:var(--paper);box-shadow:0 18px 46px #27302c24}
+.campaign-create-popover h2{margin-bottom:2px;font-size:18px}
+.campaign-create-popover>label{color:var(--ink-soft);font-size:12px;font-weight:600}
+.campaign-create-popover>input{width:100%;min-height:46px;padding:0 13px;color:var(--ink);border:1px solid #c7c7be;border-radius:10px;background:#fff;font-size:14px}
+.campaign-create-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.campaign-create-actions .button{min-height:42px;border-radius:999px;font-size:12px}
+.campaign-empty h2{margin-top:0}
+@media(max-width:820px){
+  .campaigns-heading{align-items:flex-start;flex-direction:row;gap:16px}
+  .campaign-create-anchor{margin-left:auto}
+  .campaign-create-trigger{width:44px;min-width:44px;padding:0}
+  .campaign-create-trigger span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+  .chat-empty-state{min-height:min(58vh,480px);padding:20px 5px 34px}
+  .chat-empty-state h1{font-size:clamp(34px,7vw,48px)}
+}
+@media(max-width:460px){
+  .campaigns-heading{gap:10px}
+  .campaign-create-popover{right:0;padding:18px}
+  .chat-empty-state p{font-size:13px}
+  .chat-starters{gap:7px;margin-top:20px}
+  .chat-starters button{min-height:40px;font-size:11px}
 }

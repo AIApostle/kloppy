@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDiscon
 
 from ..schemas.assistant import ChatRequest, ChatResponse
 from ..services.agent import AgentConfigurationError, AgentProviderError, StrandsAgentService
+from ..services.brand_knowledge import context_sources
 from ..services.user_settings import SettingsAuthenticationError, SettingsStoreError, read_user_settings
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
@@ -21,7 +22,7 @@ def chat(
         raise HTTPException(status_code=401, detail="Authentication required.")
     try:
         user_settings = read_user_settings(authorization[7:].strip())
-        return agent_service.respond(payload, user_settings)
+        return agent_service.respond(payload, user_settings, access_token=authorization[7:].strip(), brand_sources=context_sources(authorization[7:].strip()))
     except SettingsAuthenticationError as error:
         raise HTTPException(status_code=401, detail="Settings or authentication could not be verified.") from error
     except SettingsStoreError as error:
@@ -72,6 +73,8 @@ async def chat_socket(websocket: WebSocket) -> None:
                         payload,
                         user_settings,
                         forward_activity,
+                        token,
+                        context_sources(token),
                     )
                 )
                 while not response_task.done():

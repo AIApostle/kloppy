@@ -14,21 +14,25 @@ Kloppy can expose server-side Qloo cultural research and allowlisted tools from
 external MCP servers to the Strands agent. Set `QLOO_API_KEY` to enable Qloo.
 Qloo credentials stay on the backend; the browser never receives the key.
 
-Configure remote HTTPS or local loopback Streamable HTTP MCP servers through
-`MCP_SERVERS_JSON` as JSON. Each server entry must include `allowed_tools` with
-exact tool names. Kloppy only passes through tools that the server marks as
-read-only. This prevents an
-unreviewed MCP server from publishing, sending, spending, or changing external
-accounts. Use `${env:VARIABLE_NAME}` for secrets in server headers and define
-those variables in the backend process environment. For local development,
-export referenced variables in the shell before starting the API. Configure
-one server for each service you use. The integrations page lists the supported
-providers: Meta Ads, Google Ads, HubSpot, Mailchimp, Canva, Figma, Google Drive,
-Notion, Google Analytics 4, and Shopify. The generic MCP client does not supply
-provider endpoints, OAuth grants, or credentials; configure those from each
-provider's current MCP offering before its tools can appear in `AVAILABLE_TOOLS`.
-Only read-only MCP tools are currently passed to the agent, so external write
-actions still require an approved write-capable integration path.
+Configure shared remote HTTPS or local loopback Streamable HTTP MCP servers
+through `MCP_SERVERS_JSON`, or connect an individual user's MCP server from the
+Integrations page. Per-user connections are tested before saving, encrypted
+with `INTEGRATION_ENCRYPTION_KEY`, and scoped by Supabase RLS. Generate a key
+with `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+Set the same key in the local backend environment and the deployed API
+environment; changing it makes previously stored MCP tokens unreadable.
+
+The Integrations page supports Meta Ads, Google Ads, HubSpot, Mailchimp, Canva,
+Figma, Google Drive, Notion, Google Analytics 4, Shopify, and custom MCP
+servers. These are generic MCP connections, not built-in OAuth integrations:
+provide the endpoint and authentication token from a provider's MCP offering.
+Kloppy discovers available tools and permits only those explicitly selected
+that the server marks read-only. The current connector layer cannot publish,
+send, spend, or change external accounts. Those actions need dedicated
+provider write adapters and an approval flow.
+
+Qloo uses the server-only `QLOO_API_KEY` and is exposed to the agent as a
+backend tool; it does not appear as a user-configurable browser integration.
 
 For example, configure separate entries in `MCP_SERVERS_JSON` using the MCP
 endpoint and exact read-only tool names provided by each service:

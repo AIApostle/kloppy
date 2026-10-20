@@ -12,6 +12,7 @@ from strands import ToolContext, tool
 from strands.tools.mcp import MCPClient
 
 from ..config import settings
+from .mcp_connections import user_server_config
 
 logger = logging.getLogger(__name__)
 
@@ -122,18 +123,19 @@ def draft_document(
     return {"status": "drafted", "title": safe_title, "format": "Markdown"}
 
 
-def _load_mcp_config() -> dict[str, Any]:
-    if not settings.mcp_servers_json:
-        return {"mcpServers": {}}
-    try:
-        raw = json.loads(settings.mcp_servers_json)
-    except json.JSONDecodeError as error:
-        logger.error("MCP_SERVERS_JSON is invalid JSON at character %s", error.pos)
-        return {"mcpServers": {}}
+def _load_mcp_config(access_token: str | None = None) -> dict[str, Any]:
+    raw: Any = {}
+    if settings.mcp_servers_json:
+        try:
+            raw = json.loads(settings.mcp_servers_json)
+        except json.JSONDecodeError as error:
+            logger.error("MCP_SERVERS_JSON is invalid JSON at character %s", error.pos)
     servers = raw.get("mcpServers", raw) if isinstance(raw, dict) else {}
     if not isinstance(servers, dict):
         logger.error("MCP_SERVERS_JSON must contain an mcpServers object")
-        return {"mcpServers": {}}
+        servers = {}
+    if access_token:
+        servers = {**servers, **user_server_config(access_token).get("mcpServers", {})}
     safe_servers: dict[str, Any] = {}
     for name, original in servers.items():
         if not isinstance(original, dict):
@@ -157,9 +159,9 @@ def _load_mcp_config() -> dict[str, Any]:
     return {"mcpServers": safe_servers}
 
 
-def connected_mcp_clients() -> list[MCPClient]:
+def connected_mcp_clients(access_token: str | None = None) -> list[MCPClient]:
     """Create clients only for explicitly configured, allowlisted MCP tools."""
-    config = _load_mcp_config()
+    config = _load_mcp_config(access_token)
     if not config["mcpServers"]:
         return []
     try:
@@ -169,13 +171,13 @@ def connected_mcp_clients() -> list[MCPClient]:
         return []
 
 
-def agent_tool_session() -> tuple[ExitStack, list[Any]]:
+def agent_tool_session(access_token: str | None = None) -> tuple[ExitStack, list[Any]]:
     """Open configured read-only MCP tools and Qloo for an agent turn."""
     stack = ExitStack()
     tools: list[Any] = [draft_document]
     if settings.qloo_api_key:
         tools.extend([qloo_search_entities, qloo_cultural_affinities])
-    clients = connected_mcp_clients()
+    clients = connected_mcp_clients(access_token)
     for client in clients:
         try:
             stack.enter_context(client)
