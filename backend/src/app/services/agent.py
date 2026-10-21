@@ -86,7 +86,10 @@ class StrandsAgentService:
             payload.message,
             payload.campaign_id,
         )
-        stack, tools = agent_tool_session(access_token)
+        stack, tools = agent_tool_session(
+            access_token,
+            memory_enabled=memory_context.project_namespace is not None,
+        )
         try:
             with stack:
                 prompt = self._prompt_for(
@@ -120,6 +123,10 @@ class StrandsAgentService:
                     callback_handler=callback_handler,
                 )
                 invocation_state: dict[str, Any] = {"artifacts": []}
+                if memory_context.project_namespace:
+                    invocation_state["walrus_project_namespace"] = (
+                        memory_context.project_namespace
+                    )
                 result = agent(prompt, invocation_state=invocation_state)
         except Exception as error:
             raise AgentProviderError("The agent could not complete this request.") from error

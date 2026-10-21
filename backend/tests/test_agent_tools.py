@@ -3,6 +3,7 @@
 import base64
 import unittest
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -116,6 +117,43 @@ class AgentToolTests(unittest.TestCase):
             stack.close()
 
         self.assertIn(agent_tools.web_search, tools)
+
+    def test_project_memory_tool_is_only_exposed_for_a_selected_project(self) -> None:
+        with patch.object(agent_tools, "connected_mcp_clients", return_value=[]):
+            stack, tools = agent_tools.agent_tool_session(memory_enabled=False)
+            stack.close()
+            self.assertNotIn(agent_tools.walrus_remember_project_fact, tools)
+
+            stack, tools = agent_tools.agent_tool_session(memory_enabled=True)
+            stack.close()
+            self.assertIn(agent_tools.walrus_remember_project_fact, tools)
+
+    def test_project_memory_tool_uses_server_supplied_namespace(self) -> None:
+        tool_function = agent_tools.walrus_remember_project_fact.__wrapped__
+        invocation_context = SimpleNamespace(
+            invocation_state={"walrus_project_namespace": "kloppy-user-project-hash"}
+        )
+        with patch.object(
+            agent_tools,
+            "remember_project_fact",
+            return_value={"status": "queued"},
+        ) as remember:
+            result = tool_function(
+                "The launch is planned for September.",
+                invocation_context,
+            )
+
+        self.assertEqual(result, {"status": "queued"})
+        remember.assert_called_once_with(
+            "kloppy-user-project-hash",
+            "The launch is planned for September.",
+        )
+        self.assertEqual(
+            agent_tools.walrus_remember_project_fact.tool_spec["inputSchema"]["json"][
+                "properties"
+            ].keys(),
+            {"fact"},
+        )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ The liveness endpoints are `/health`, `/ping`, and `/keepalive`.
 The hosted frontend's default API endpoint is
 `https://kloppy-dd2u.onrender.com/api`. Set `VITE_API_URL` in the frontend
 deployment environment at build time only when pointing it at a different API.
+In production, the frontend health-checks configured endpoints and falls back
+to the hosted API if an endpoint is unavailable.
 The API allows the configured frontend origins from `FRONTEND_ORIGINS`; add
 the deployed frontend's origin there if it is not already listed.
 
@@ -24,15 +26,18 @@ an account and delegate key at [memory.walrus.xyz](https://memory.walrus.xyz).
 The delegate key must stay server-side.
 
 The API verifies the Supabase bearer token before deriving opaque, stable
-Walrus namespaces for the user workspace and each campaign. Agent turns recall
-from the workspace and current campaign only, then submit the user's message
-for fact extraction; assistant-generated text is not written to memory. If
-Walrus is not configured or unavailable, the current turn continues without
-recalled memory. User messages sent for memory processing are transmitted to
-the configured Walrus Memory relayer over HTTPS.
+Walrus namespaces for the user workspace and each selected project (the
+campaign ID). Agent turns recall from the workspace and current project only,
+then submit the user's message for fact extraction; assistant-generated text
+is not written to memory. The agent also has a project-scoped memory tool for
+explicitly retaining concise, durable user-provided project facts. Writes are
+queued and idempotent per fact. If Walrus is not configured or unavailable,
+the current turn continues without recalled memory. User messages and facts
+sent for memory processing are transmitted to the configured Walrus Memory
+relayer over HTTPS.
 
-The integration uses `MemWalSync`, `RecallParams`, and non-blocking
-`analyze()` from the Python SDK. See the
+The integration uses `MemWalSync`, `RecallParams`, `recall()`, `analyze()`,
+and `remember()` from the Python SDK. See the
 [Python SDK project on PyPI](https://pypi.org/project/memwal/) and the
 [Walrus Memory documentation](https://memory.walrus.xyz).
 

@@ -17,6 +17,7 @@ from strands.tools.mcp import MCPClient
 
 from ..config import settings
 from .mcp_connections import user_server_config
+from .memory import remember_project_fact
 from .qloo import (
     ENTITY_TYPES,
     QlooConfigurationError,
@@ -229,6 +230,16 @@ def web_search(query: str) -> dict[str, Any]:
     return _run_web_search(query)
 
 
+@tool(context=True)
+def walrus_remember_project_fact(fact: str, tool_context: ToolContext) -> dict[str, str]:
+    """Remember a concise, explicit user-provided fact for the currently selected project."""
+    namespace = tool_context.invocation_state.get("walrus_project_namespace")
+    return remember_project_fact(
+        namespace if isinstance(namespace, str) else None,
+        fact,
+    )
+
+
 def _load_mcp_config(access_token: str | None = None) -> dict[str, Any]:
     raw: Any = {}
     if settings.mcp_servers_json:
@@ -277,10 +288,15 @@ def connected_mcp_clients(access_token: str | None = None) -> list[MCPClient]:
         return []
 
 
-def agent_tool_session(access_token: str | None = None) -> tuple[ExitStack, list[Any]]:
+def agent_tool_session(
+    access_token: str | None = None,
+    memory_enabled: bool = False,
+) -> tuple[ExitStack, list[Any]]:
     """Open configured research and read-only tools for an agent turn."""
     stack = ExitStack()
     tools: list[Any] = [draft_document]
+    if memory_enabled:
+        tools.append(walrus_remember_project_fact)
     if settings.tavily_api_key:
         tools.append(web_search)
     if settings.qloo_api_key:

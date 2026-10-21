@@ -22,6 +22,7 @@ class AgentMemoryContext:
 
     status: Literal["available", "not_configured", "unavailable"]
     memories: tuple[dict[str, str], ...] = ()
+    project_namespace: str | None = None
 
 
 def _is_configured() -> bool:
@@ -44,6 +45,44 @@ def _create_client() -> MemWalSync:
     )
 
 
+def remember_project_fact(namespace: str | None, fact: str) -> dict[str, str]:
+    """Queue one concise, explicit project fact in its verified namespace."""
+    if not _is_configured():
+        return {"status": "not_configured"}
+    if not namespace or not namespace.startswith("kloppy-"):
+        return {"status": "unavailable"}
+    if not isinstance(fact, str):
+        return {"status": "invalid"}
+
+    normalized_fact = " ".join(fact.split())[:MAX_MEMORY_TEXT_LENGTH]
+    if not normalized_fact:
+        return {"status": "invalid"}
+
+    client: MemWalSync | None = None
+    try:
+        client = _create_client()
+        accepted = client.remember(
+            normalized_fact,
+            namespace=namespace,
+            idempotency_key=hashlib.sha256(
+                f"{namespace}\0{normalized_fact}".encode()
+            ).hexdigest(),
+        )
+        if not accepted.job_id:
+            logger.warning("Walrus did not accept a project memory job")
+            return {"status": "unavailable"}
+        return {"status": "queued"}
+    except (MemWalError, httpx.HTTPError, TypeError, ValueError) as error:
+        logger.warning("Walrus project memory write failed: %s", type(error).__name__)
+        return {"status": "unavailable"}
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except (MemWalError, httpx.HTTPError, RuntimeError) as error:
+                logger.warning("Walrus memory client close failed: %s", type(error).__name__)
+
+
 def capture_turn_memory(
     access_token: str | None,
     user_message: str,
@@ -57,13 +96,18 @@ def capture_turn_memory(
 
     client: MemWalSync | None = None
     memories: list[dict[str, str]] = []
+    project_namespace: str | None = None
+    workspace_namespace: str | None = None
     failed = False
     try:
         user_id = _user_id(access_token)
-        client = _create_client()
-        scopes = [("workspace", _namespace(user_id))]
+        workspace_namespace = _namespace(user_id)
         if campaign_id:
-            scopes.append(("campaign", _namespace(user_id, campaign_id)))
+            project_namespace = _namespace(user_id, campaign_id)
+        client = _create_client()
+        scopes = [("workspace", workspace_namespace)]
+        if project_namespace:
+            scopes.append(("project", project_namespace))
 
         seen: set[str] = set()
         for scope, namespace in scopes:
@@ -84,7 +128,7 @@ def capture_turn_memory(
         if len(user_message.split()) >= 3:
             accepted = client.analyze(
                 user_message[:2000],
-                namespace=_namespace(user_id, campaign_id),
+                namespace=project_namespace or workspace_namespace,
             )
             logger.info("Walrus accepted %s memory fact jobs", len(accepted.job_ids))
     except (MemWalError, httpx.HTTPError, SettingsStoreError, TypeError, ValueError) as error:
@@ -101,4 +145,5 @@ def capture_turn_memory(
     return AgentMemoryContext(
         status="unavailable" if failed and not memories else "available",
         memories=tuple(memories),
+        project_namespace=project_namespace,
     )

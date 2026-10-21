@@ -64,12 +64,11 @@ async function resolveApiBaseUrl(excludeUrl?: string) {
   if (apiBaseCache && apiBaseCache.expiresAt > Date.now() && apiBaseCache.url !== excludeUrl) return apiBaseCache.url
 
   apiBaseCache = null
-  const configuredUrl = import.meta.env.VITE_API_URL?.trim()
   const hostname = window.location.hostname
   const localDevelopment = import.meta.env.DEV || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
   for (const candidate of apiCandidates()) {
     if (candidate === excludeUrl) continue
-    const shouldProbe = !configuredUrl && !localDevelopment && !hostname.endsWith('.vercel.app')
+    const shouldProbe = !localDevelopment
     if (!shouldProbe || await apiIsHealthy(candidate)) {
       apiBaseCache = { url: candidate, expiresAt: Date.now() + API_CACHE_MS }
       return candidate
