@@ -8,6 +8,12 @@ uv run uvicorn main:app --reload --port 8000
 
 The liveness endpoints are `/health`, `/ping`, and `/keepalive`.
 
+The hosted frontend's default API endpoint is
+`https://kloppy-dd2u.onrender.com/api`. Set `VITE_API_URL` in the frontend
+deployment environment at build time only when pointing it at a different API.
+The API allows the configured frontend origins from `FRONTEND_ORIGINS`; add
+the deployed frontend's origin there if it is not already listed.
+
 # Agent memory: Walrus Memory
 
 Kloppy can recall relevant conversation facts between sessions with the

@@ -6,7 +6,7 @@ type AuthMode = 'login' | 'signup'
 type UserSettings = { name: string; workspace: string; digest_enabled: boolean; permission_policy: 'ask' | 'auto' }
 type IconName = 'activity' | 'arrow' | 'brief' | 'campaigns' | 'chevron' | 'creative' | 'dots' | 'insights' | 'plus' | 'search' | 'settings' | 'spark' | 'strategy' | 'trend' | 'send' | 'lock' | 'check' | 'play' | 'book' | 'collapse' | 'external' | 'plug' | 'file' | 'eye' | 'eyeOff' | 'logout' | 'user'
 
-const HOSTED_API_URL = 'https://kloppy.onrender.com/api'
+const HOSTED_API_URL = 'https://kloppy-dd2u.onrender.com/api'
 const API_PROBE_TIMEOUT_MS = 2500
 const API_CACHE_MS = 30_000
 let apiBaseCache: { url: string; expiresAt: number } | null = null
