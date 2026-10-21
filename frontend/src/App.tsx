@@ -6,7 +6,96 @@ type AuthMode = 'login' | 'signup'
 type UserSettings = { name: string; workspace: string; digest_enabled: boolean; permission_policy: 'ask' | 'auto' }
 type IconName = 'activity' | 'arrow' | 'brief' | 'campaigns' | 'chevron' | 'creative' | 'dots' | 'insights' | 'plus' | 'search' | 'settings' | 'spark' | 'strategy' | 'trend' | 'send' | 'lock' | 'check' | 'play' | 'book' | 'collapse' | 'external' | 'plug' | 'file' | 'eye' | 'eyeOff' | 'logout' | 'user'
 
-const API_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.PROD ? 'https://kloppy.onrender.com/api' : 'http://localhost:8000/api')
+const HOSTED_API_URL = 'https://kloppy.onrender.com/api'
+const API_PROBE_TIMEOUT_MS = 2500
+const API_CACHE_MS = 30_000
+let apiBaseCache: { url: string; expiresAt: number } | null = null
+
+class ApiRequestError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
+class ApiConnectionError extends Error {}
+
+function apiCandidates() {
+  const hostname = window.location.hostname
+  const isIpv6 = hostname.includes(':')
+  const hostForUrl = isIpv6 && !hostname.startsWith('[') ? `[${hostname}]` : hostname
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+  const candidates: string[] = []
+  const configuredUrl = import.meta.env.VITE_API_URL?.trim()
+  if (configuredUrl) candidates.push(configuredUrl.replace(/\/+$/, '').replace(/\/api$/i, '') + '/api')
+
+  if (import.meta.env.DEV || isLocalhost) {
+    candidates.push(`${window.location.protocol}//${hostForUrl}:8001/api`)
+    if (hostname !== 'localhost') candidates.push('http://localhost:8001/api')
+    if (hostname !== '127.0.0.1') candidates.push('http://127.0.0.1:8001/api')
+    if (!import.meta.env.DEV) candidates.push(HOSTED_API_URL)
+  } else if (hostname.endsWith('.vercel.app')) {
+    candidates.push(HOSTED_API_URL)
+  } else {
+    candidates.push(`${window.location.origin}/api`, HOSTED_API_URL)
+  }
+
+  return [...new Set(candidates)]
+}
+
+async function apiIsHealthy(baseUrl: string) {
+  const healthUrl = baseUrl.replace(/\/api\/?$/i, '') + '/health'
+  try {
+    const response = await fetch(healthUrl, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(API_PROBE_TIMEOUT_MS),
+    })
+    if (!response.ok) return false
+    const health = await response.json() as { status?: string }
+    return health.status === 'ok'
+  } catch {
+    return false
+  }
+}
+
+async function resolveApiBaseUrl(excludeUrl?: string) {
+  if (apiBaseCache && apiBaseCache.expiresAt > Date.now() && apiBaseCache.url !== excludeUrl) return apiBaseCache.url
+
+  apiBaseCache = null
+  const configuredUrl = import.meta.env.VITE_API_URL?.trim()
+  const hostname = window.location.hostname
+  const localDevelopment = import.meta.env.DEV || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+  for (const candidate of apiCandidates()) {
+    if (candidate === excludeUrl) continue
+    const shouldProbe = !configuredUrl && !localDevelopment && !hostname.endsWith('.vercel.app')
+    if (!shouldProbe || await apiIsHealthy(candidate)) {
+      apiBaseCache = { url: candidate, expiresAt: Date.now() + API_CACHE_MS }
+      return candidate
+    }
+  }
+
+  throw new ApiConnectionError('Kloppy could not reach its backend. Check that the API is running and try again.')
+}
+
+async function fetchFromApi(path: string, options?: RequestInit) {
+  let baseUrl = await resolveApiBaseUrl()
+  try {
+    return await fetch(`${baseUrl}${path}`, options)
+  } catch {
+    apiBaseCache = null
+    baseUrl = await resolveApiBaseUrl(baseUrl)
+    try {
+      return await fetch(`${baseUrl}${path}`, options)
+    } catch {
+      apiBaseCache = null
+      throw new ApiConnectionError('Kloppy lost its connection to the backend. Check the API and try again.')
+    }
+  }
+}
+
+const appRoutes = new Set<Page>(['chat', 'campaigns', 'knowledge', 'integrations', 'settings', 'campaign-chat', 'overview', 'audience', 'strategy', 'launch'])
 
 const navItems: { label: string; page: Page; icon: IconName }[] = [
   { label: 'Kloppy', page: 'chat', icon: 'spark' },
@@ -85,10 +174,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers)
   headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers })
+  const response = await fetchFromApi(path, { ...options, headers })
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { detail?: string }
-    throw new Error(body.detail ?? 'Request failed')
+    const fallback = response.status >= 500
+      ? `The backend returned HTTP ${response.status}. Check that the API service is active.`
+      : `Request failed with HTTP ${response.status}.`
+    throw new ApiRequestError(body.detail ?? fallback, response.status)
   }
   if (response.status === 204) return undefined as T
   return response.json()
@@ -98,10 +190,13 @@ async function uploadRequest<T>(path: string, data: FormData): Promise<T> {
   const headers = new Headers()
   const token = localStorage.getItem('kloppy-session')
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const response = await fetch(`${API_URL}${path}`, { method: 'POST', headers, body: data })
+  const response = await fetchFromApi(path, { method: 'POST', headers, body: data })
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { detail?: string }
-    throw new Error(body.detail ?? 'Upload failed')
+    const fallback = response.status >= 500
+      ? `The backend returned HTTP ${response.status}. Check that the API service is active.`
+      : `Upload failed with HTTP ${response.status}.`
+    throw new ApiRequestError(body.detail ?? fallback, response.status)
   }
   return response.json()
 }
@@ -273,30 +368,44 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
   useEffect(() => {
     const token = localStorage.getItem('kloppy-session')
     if (!token) return
-    const websocketBase = API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
-    const connection = new WebSocket(`${websocketBase}/assistant/ws?access_token=${encodeURIComponent(token)}`)
-    connection.onmessage = (event) => {
-      const data = JSON.parse(event.data) as { type?: string; reply?: string; error?: string; error_code?: string; artifact?: DocumentArtifact; activities?: AgentActivity[]; label?: string; status?: string; tool?: string }
-      if (data.type === 'activity') {
-        setActivities((items) => [...items, { label: data.label ?? 'Working on your request', status: data.status ?? 'working', tool: data.tool }])
-        return
-      }
-      const lowerError = data.error?.toLowerCase() ?? ''
-      const errorMessage = lowerError.includes('schema cache') || lowerError.includes('user_settings')
-        ? 'Kloppy can’t read your saved settings yet. Apply backend/db/003_user_settings.sql in Supabase, then retry.'
-        : data.error_code === 'authentication_required'
-          ? 'Your session has expired. Sign in again to continue.'
-          : lowerError.includes('not configured')
-        ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.'
-        : data.error ? 'I couldn’t complete that just now. Please try again in a moment.' : undefined
-      setMessages((items) => [...items, { role: 'agent', text: data.reply ?? errorMessage ?? 'The agent returned no response.', artifact: data.artifact, activities: data.activities }])
-      if (data.artifact) setViewer(data.artifact)
-      setActivities([])
-      setBusy(false)
+    let active = true
+    let connection: WebSocket | null = null
+    resolveApiBaseUrl()
+      .then((apiBaseUrl) => {
+        if (!active) return
+        const websocketBase = apiBaseUrl.replace(/^http/, 'ws').replace(/\/$/, '')
+        const nextConnection = new WebSocket(`${websocketBase}/assistant/ws?access_token=${encodeURIComponent(token)}`)
+        connection = nextConnection
+        nextConnection.onmessage = (event) => {
+          const data = JSON.parse(event.data) as { type?: string; reply?: string; error?: string; error_code?: string; artifact?: DocumentArtifact; activities?: AgentActivity[]; label?: string; status?: string; tool?: string }
+          if (data.type === 'activity') {
+            setActivities((items) => [...items, { label: data.label ?? 'Working on your request', status: data.status ?? 'working', tool: data.tool }])
+            return
+          }
+          const lowerError = data.error?.toLowerCase() ?? ''
+          const errorMessage = lowerError.includes('schema cache') || lowerError.includes('user_settings')
+            ? 'Kloppy can’t read your saved settings yet. Apply backend/db/003_user_settings.sql in Supabase, then retry.'
+            : data.error_code === 'authentication_required'
+              ? 'Your session has expired. Sign in again to continue.'
+              : lowerError.includes('not configured')
+            ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.'
+            : data.error ? 'I couldn’t complete that just now. Please try again in a moment.' : undefined
+          setMessages((items) => [...items, { role: 'agent', text: data.reply ?? errorMessage ?? 'The agent returned no response.', artifact: data.artifact, activities: data.activities }])
+          if (data.artifact) setViewer(data.artifact)
+          setActivities([])
+          setBusy(false)
+        }
+        nextConnection.onopen = () => setSocket(nextConnection)
+        nextConnection.onclose = () => {
+          if (apiBaseCache?.url === apiBaseUrl) apiBaseCache = null
+          setSocket(null)
+        }
+      })
+      .catch(() => setSocket(null))
+    return () => {
+      active = false
+      connection?.close()
     }
-    connection.onopen = () => setSocket(connection)
-    connection.onclose = () => setSocket(null)
-    return () => connection.close()
   }, [])
 
   const send = async (value = input) => {
@@ -308,7 +417,27 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
     const payload = { message: value, attachments: files, context_items: contextItems, conversation_history, campaign_id: campaignId, campaign_name: campaignName }
     setMessages((items) => [...items, { role: 'user', text: value }]); setInput(''); setBusy(true); setActivities([{ label: 'Connecting campaign context and available tools', status: 'working' }])
     if (socket?.readyState === WebSocket.OPEN) { socket.send(JSON.stringify(payload)); return }
-    try { const data = await request<{ reply: string; artifact?: DocumentArtifact; activities?: AgentActivity[] }>('/assistant/chat', { method: 'POST', body: JSON.stringify(payload) }); setMessages((items) => [...items, { role: 'agent', text: data.reply, artifact: data.artifact, activities: data.activities }]); if (data.artifact) setViewer(data.artifact) } catch (error) { const detail = error instanceof Error ? error.message : ''; const lower = detail.toLowerCase(); const message = lower.includes('schema cache') || lower.includes('user_settings') ? 'Kloppy can’t read your saved settings yet. Apply backend/db/003_user_settings.sql in Supabase, then retry.' : lower.includes('authentication') ? 'Your session has expired. Sign in again to continue.' : lower.includes('not configured') ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.' : 'I couldn’t reach the campaign service just now. Please try again in a moment.'; setMessages((items) => [...items, { role: 'agent', text: message }]) } finally { setBusy(false); setActivities([]) }
+    try {
+      const data = await request<{ reply: string; artifact?: DocumentArtifact; activities?: AgentActivity[] }>('/assistant/chat', { method: 'POST', body: JSON.stringify(payload) })
+      setMessages((items) => [...items, { role: 'agent', text: data.reply, artifact: data.artifact, activities: data.activities }])
+      if (data.artifact) setViewer(data.artifact)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : ''
+      const lower = detail.toLowerCase()
+      const message = lower.includes('schema cache') || lower.includes('user_settings')
+        ? 'Kloppy can’t read your saved settings yet. Apply backend/db/003_user_settings.sql in Supabase, then retry.'
+        : lower.includes('authentication')
+          ? 'Your session has expired. Sign in again to continue.'
+          : lower.includes('not configured')
+            ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.'
+            : error instanceof ApiConnectionError || error instanceof ApiRequestError
+              ? detail
+              : 'I couldn’t reach the campaign service just now. Please try again in a moment.'
+      setMessages((items) => [...items, { role: 'agent', text: message }])
+    } finally {
+      setBusy(false)
+      setActivities([])
+    }
   }
 
   const downloadArtifact = (artifact: DocumentArtifact) => {
@@ -676,35 +805,130 @@ function CampaignTabs({ page, setPage }: { page: Page; setPage: (page: Page) => 
   return <nav className="campaign-tabs" aria-label="Campaign sections">{campaignNav.map((item) => <button aria-label={item.label} className={page === item.page ? 'active' : ''} key={item.page} onClick={() => setPage(item.page)}>{item.page === 'campaign-chat' ? <KloppyMark /> : <Icon name={item.icon} size={15} />}<span>{item.page === 'launch' ? <><span className="tab-long-label">Launch &amp; learn</span><span className="tab-short-label">Launch</span></> : item.label}</span></button>)}</nav>
 }
 
+function SessionStatus({ error, onRetry, onSignIn }: { error?: string; onRetry: () => void; onSignIn?: () => void }) {
+  return <main className="session-status" aria-live="polite" aria-busy={!error}>
+    <section className="session-status-card">
+      <Brand />
+      <h1>{error ? 'Kloppy could not verify your session.' : 'Checking your session…'}</h1>
+      <p>{error ?? 'We’re confirming your sign-in with the backend before opening your workspace.'}</p>
+      {error && onSignIn && <div className="session-status-actions">
+        <button className="button primary" type="button" onClick={onRetry}>Try again <Icon name="arrow" size={15} /></button>
+        <button className="text-button" type="button" onClick={onSignIn}>Return to sign in</button>
+      </div>}
+    </section>
+  </main>
+}
+
 function App() {
   const initialRoute = window.location.hash.slice(1) || (localStorage.getItem('kloppy-session') ? 'chat' : 'landing')
-  const [route, setRoute] = useState(initialRoute === 'creative' ? 'campaign-chat' : initialRoute); const [authMode, setAuthMode] = useState<AuthMode>('login'); const [user, setUser] = useState({ name: localStorage.getItem('kloppy-user-name') ?? 'My profile' }); const [searchQuery, setSearchQuery] = useState('')
+  const [route, setRoute] = useState(initialRoute === 'creative' ? 'campaign-chat' : initialRoute)
+  const [authMode, setAuthMode] = useState<AuthMode>('login')
+  const [user, setUser] = useState({ name: localStorage.getItem('kloppy-user-name') ?? 'My profile' })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sessionStatus, setSessionStatus] = useState<'checking' | 'authenticated' | 'anonymous' | 'unavailable'>(() => localStorage.getItem('kloppy-session') ? 'checking' : 'anonymous')
+  const [sessionError, setSessionError] = useState('')
+  const [sessionRetry, setSessionRetry] = useState(0)
+  const pendingRoute = useRef<string | null>(appRoutes.has(initialRoute as Page) ? initialRoute : null)
   const [campaigns, setCampaigns] = useState<Campaign[]>(readCampaigns)
   const [selectedCampaignId, setSelectedCampaignId] = useState(() => localStorage.getItem(`kloppy-selected-campaign:${accountKey()}`) ?? '')
   const selectedCampaign = campaigns.find((item) => item.id === selectedCampaignId)
   const createCampaign = (name: string, conversation?: ChatMessage[]) => { const campaign = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }; const next = [campaign, ...campaigns]; setCampaigns(next); localStorage.setItem(`kloppy-campaigns:${accountKey()}`, JSON.stringify(next)); if (conversation) localStorage.setItem(`kloppy-chat:${accountKey()}:${campaign.id}`, JSON.stringify(conversation)); setSelectedCampaignId(campaign.id); localStorage.setItem(`kloppy-selected-campaign:${accountKey()}`, campaign.id); go('campaign-chat') }
   const openCampaign = (campaign: Campaign) => { setSelectedCampaignId(campaign.id); localStorage.setItem(`kloppy-selected-campaign:${accountKey()}`, campaign.id); go('campaign-chat') }
+
+  useEffect(() => {
+    let active = true
+    const token = localStorage.getItem('kloppy-session')
+    if (!token) return () => { active = false }
+    request<{ user_id: string }>('/auth/session')
+      .then(({ user_id }) => {
+        if (!active) return
+        if (!user_id) throw new Error('The backend returned an invalid session.')
+        setSessionStatus('authenticated')
+      })
+      .catch((reason: unknown) => {
+        if (!active) return
+        if (reason instanceof ApiRequestError && (reason.status === 401 || reason.status === 403)) {
+          localStorage.removeItem('kloppy-session')
+          localStorage.removeItem('kloppy-user-name')
+          setSessionStatus('anonymous')
+          return
+        }
+        setSessionError(reason instanceof Error ? reason.message : 'The backend could not verify this session.')
+        setSessionStatus('unavailable')
+      })
+
+    return () => { active = false }
+  }, [sessionRetry])
+
   useEffect(() => {
     const sync = () => {
-      const current = window.location.hash.slice(1) || 'landing'
-      if (current === 'creative') {
-        window.location.hash = 'campaign-chat'
-        setRoute('campaign-chat')
+      let current = window.location.hash.slice(1) || 'landing'
+      if (current === 'creative') current = 'campaign-chat'
+      if (current !== 'landing' && current !== 'auth' && !appRoutes.has(current as Page)) {
+        window.location.hash = 'landing'
+        setRoute('landing')
+        return
+      }
+      if (appRoutes.has(current as Page) && sessionStatus === 'anonymous') {
+        pendingRoute.current = current
+        window.location.hash = 'auth'
+        setRoute('auth')
         return
       }
       setRoute(current)
     }
     window.addEventListener('hashchange', sync)
-    if (initialRoute === 'creative') window.location.hash = 'campaign-chat'
+    sync()
     return () => window.removeEventListener('hashchange', sync)
-  }, [])
-  const go = (next: string) => { window.location.hash = next }
+  }, [sessionStatus])
+  const go = (next: string) => {
+    if (appRoutes.has(next as Page) && sessionStatus !== 'authenticated') {
+      pendingRoute.current = next
+      window.location.hash = 'auth'
+      return
+    }
+    window.location.hash = next
+  }
   const askInCampaign = (prompt: string) => { if (selectedCampaign) sessionStorage.setItem(`kloppy-next-prompt:${accountKey()}:${selectedCampaign.id}`, prompt); go('campaign-chat') }
-  const logout = () => { localStorage.removeItem('kloppy-session'); localStorage.removeItem('kloppy-user-name'); setCampaigns([]); setSelectedCampaignId(''); setAuthMode('login'); go('landing') }
+  const logout = () => { localStorage.removeItem('kloppy-session'); localStorage.removeItem('kloppy-user-name'); setCampaigns([]); setSelectedCampaignId(''); setAuthMode('login'); setSessionStatus('anonymous'); go('landing') }
+  const retrySession = () => {
+    setSessionError('')
+    setSessionStatus('checking')
+    setSessionRetry((attempt) => attempt + 1)
+  }
+  const completeAuth = (nextUser: { name: string }) => {
+    setUser(nextUser)
+    localStorage.setItem('kloppy-user-name', nextUser.name)
+    setCampaigns(readCampaigns())
+    setSelectedCampaignId('')
+    const nextRoute = pendingRoute.current ?? 'chat'
+    pendingRoute.current = null
+    setSessionError('')
+    setSessionStatus('checking')
+    setSessionRetry((attempt) => attempt + 1)
+    window.location.hash = nextRoute
+  }
   if (route === 'landing') return <Landing onAuth={(mode) => { setAuthMode(mode); go('auth') }} />
-  if (route === 'auth') return <Auth mode={authMode} onMode={setAuthMode} onComplete={(nextUser) => { setUser(nextUser); localStorage.setItem('kloppy-user-name', nextUser.name); setCampaigns(readCampaigns()); setSelectedCampaignId(''); go('chat') }} />
-  const pages: Page[] = ['chat', 'campaigns', 'knowledge', 'integrations', 'settings', 'campaign-chat', 'overview', 'audience', 'strategy', 'launch']
-  const page = (pages.includes(route as Page) ? route : 'chat') as Page
+  if (route === 'auth') return <Auth mode={authMode} onMode={setAuthMode} onComplete={completeAuth} />
+  if (appRoutes.has(route as Page) && sessionStatus === 'checking') {
+    return <SessionStatus onRetry={retrySession} />
+  }
+  if (appRoutes.has(route as Page) && sessionStatus === 'unavailable') {
+    return <SessionStatus
+      error={sessionError}
+      onRetry={retrySession}
+      onSignIn={() => {
+        localStorage.removeItem('kloppy-session')
+        pendingRoute.current = null
+        setSessionStatus('anonymous')
+        setAuthMode('login')
+        window.location.hash = 'auth'
+      }}
+    />
+  }
+  if (!appRoutes.has(route as Page)) return <Landing onAuth={(mode) => { setAuthMode(mode); go('auth') }} />
+  if (sessionStatus !== 'authenticated') return <Auth mode={authMode} onMode={setAuthMode} onComplete={completeAuth} />
+  const page = route as Page
   const pageTitle = page === 'chat' ? 'Kloppy' : page === 'knowledge' ? 'Knowledge' : ['campaign-chat', 'overview', 'audience', 'strategy', 'launch'].includes(page) ? campaignNav.find((item) => item.page === page)?.label ?? 'Campaign' : navItems.find((item) => item.page === page)?.label ?? page
   const hasStudio = ['campaign-chat', 'overview', 'audience', 'strategy', 'launch'].includes(page) && Boolean(selectedCampaign)
   const canSearch = page === 'campaigns' || page === 'integrations'

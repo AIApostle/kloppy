@@ -27,8 +27,12 @@ class Settings(BaseSettings):
             "SUPABASE_PUBLISHABLE_KEY",
         ),
     )
-    memwal_url: str | None = None
-    memwal_api_key: str | None = None
+    memwal_private_key: str | None = None
+    memwal_account_id: str | None = None
+    memwal_server_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MEMWAL_SERVER_URL", "MEMWAL_URL"),
+    )
     qloo_api_key: str | None = None
     qloo_base_url: str = Field(
         default="https://api.qloo.com",

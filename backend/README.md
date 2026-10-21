@@ -8,6 +8,28 @@ uv run uvicorn main:app --reload --port 8000
 
 The liveness endpoints are `/health`, `/ping`, and `/keepalive`.
 
+# Agent memory: Walrus Memory
+
+Kloppy can recall relevant conversation facts between sessions with the
+official Walrus Memory Python SDK (`memwal`). Set `MEMWAL_PRIVATE_KEY` and
+`MEMWAL_ACCOUNT_ID` in the backend environment; optionally set
+`MEMWAL_SERVER_URL` (defaults to the Walrus Memory production relayer). Create
+an account and delegate key at [memory.walrus.xyz](https://memory.walrus.xyz).
+The delegate key must stay server-side.
+
+The API verifies the Supabase bearer token before deriving opaque, stable
+Walrus namespaces for the user workspace and each campaign. Agent turns recall
+from the workspace and current campaign only, then submit the user's message
+for fact extraction; assistant-generated text is not written to memory. If
+Walrus is not configured or unavailable, the current turn continues without
+recalled memory. User messages sent for memory processing are transmitted to
+the configured Walrus Memory relayer over HTTPS.
+
+The integration uses `MemWalSync`, `RecallParams`, and non-blocking
+`analyze()` from the Python SDK. See the
+[Python SDK project on PyPI](https://pypi.org/project/memwal/) and the
+[Walrus Memory documentation](https://memory.walrus.xyz).
+
 # Agent tools: Qloo and MCP
 
 Kloppy can expose server-side Qloo cultural research and allowlisted tools from

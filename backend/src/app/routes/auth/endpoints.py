@@ -1,6 +1,6 @@
 """Supabase authentication endpoints."""
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status
 
 from ...schemas.auth import AuthRequest, SessionResponse
 from ...services.auth import (
@@ -9,8 +9,34 @@ from ...services.auth import (
     AuthSession,
     SupabaseAuthService,
 )
+from ...services.user_settings import (
+    SettingsAuthenticationError,
+    SettingsStoreError,
+    _user_id,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/session")
+def verify_session(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+    access_token = authorization[7:].strip()
+    if not access_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+    try:
+        return {"user_id": _user_id(access_token)}
+    except SettingsAuthenticationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication could not be verified.",
+        ) from error
+    except SettingsStoreError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication could not be verified right now.",
+        ) from error
 
 
 @router.post("/signup", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)

@@ -22,6 +22,7 @@ dependencies = [
     "strands-agents>=1.60.0",
     "supabase>=2.32.0",
     "uvicorn>=0.54.0",
+    "memwal==0.1.12",
 ]
 
 [tool.uv]
