@@ -115,25 +115,6 @@ const campaignNav: { label: string; page: Page; icon: IconName }[] = [
 
 type IntegrationItem = { id: string; name: string; kind: string; category: string; description: string; status: string; connected: boolean; server_url?: string | null; allowed_tools?: string[] }
 type KnowledgeSource = { id: string; title: string; content: string; source_type: 'brand_text' | 'document'; file_name?: string | null; created_at: string }
-const achaDemoTitle = 'ACHA demo brand brief — user-provided'
-const achaDemoContent = [
-  'Grounding: This short brief is based only on the user-provided description in this Kloppy session. It is not independently verified by a public source.',
-  'Known: ACHA is described as a fashion and footwear (shoes) brand.',
-  'Not provided or verified: specific products, location, target customers, price range, materials, manufacturing, sustainability claims, sales, or campaign results.',
-  'Demo guidance: Treat any audience or positioning ideas as hypotheses to test. Ask for product and market evidence before making factual brand claims. Qloo signals are directional cultural affinity, not purchase intent or verified customer traits.',
-].join('\n\n')
-type QlooCapability = 'enrichment' | 'taste' | 'recommendations' | 'locality' | 'grounding' | 'on_device'
-type QlooEntity = { name?: string; entity_id?: string; types?: string[]; rank?: number; affinity?: number; affinity_rank?: number; popularity?: number; description?: string; properties?: Record<string, unknown>; tags?: { name?: string }[] }
-type QlooResponse = { capability: QlooCapability; source: string; results: QlooEntity[]; heatmap?: { rank: number; latitude?: number; longitude?: number; affinity?: number; affinity_rank?: number; popularity?: number }[]; snapshot?: { schema_version: number; created_at: string; items: QlooEntity[]; [key: string]: unknown }; interpretation: string; ranking_basis?: string }
-const qlooCapabilities: { id: QlooCapability; label: string; detail: string }[] = [
-  { id: 'enrichment', label: 'Enrichment', detail: 'Resolve a record and attach Qloo attributes.' },
-  { id: 'taste', label: 'Taste intelligence', detail: 'Explore likely affinities from cultural interests.' },
-  { id: 'recommendations', label: 'Recommendations', detail: 'Carry a taste signal into another category.' },
-  { id: 'locality', label: 'Locality', detail: 'Explore nearby affinity and geographic heatmaps.' },
-  { id: 'grounding', label: 'Agent grounding', detail: 'Give Kloppy source-backed options in Qloo rank order.' },
-  { id: 'on_device', label: 'On-device', detail: 'Download a Qloo snapshot and re-rank it in this browser.' },
-]
-const qlooEntityCategories = ['place', 'artist', 'brand', 'book', 'movie', 'destination', 'person', 'podcast', 'tv_show'] as const
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true }
@@ -311,9 +292,30 @@ function Sidebar({ page, setPage, user, onLogout }: { page: Page; setPage: (page
 
 type PermissionPolicy = 'ask' | 'auto'
 type AgentActivity = { label: string; status: string; tool?: string }
-type DocumentArtifact = { title: string; content: string; format?: string; filename?: string }
+type CampaignSections = Partial<Record<'overview' | 'audience' | 'strategy' | 'launch', string>>
+type DocumentArtifact = { title: string; content: string; format?: string; filename?: string; docx_base64?: string; sections?: CampaignSections }
 type ChatMessage = { role: 'agent' | 'user'; text: string; artifact?: DocumentArtifact; activities?: AgentActivity[] }
 type Campaign = { id: string; name: string; createdAt: string }
+
+function campaignSectionsKey(campaignId: string) {
+  return `kloppy-campaign-sections:${accountKey()}:${campaignId}`
+}
+
+function readCampaignSections(campaignId: string): CampaignSections {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(campaignSectionsKey(campaignId)) ?? '{}')
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    const source = value as Record<string, unknown>
+    return {
+      overview: typeof source.overview === 'string' ? source.overview : undefined,
+      audience: typeof source.audience === 'string' ? source.audience : undefined,
+      strategy: typeof source.strategy === 'string' ? source.strategy : undefined,
+      launch: typeof source.launch === 'string' ? source.launch : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
 
 function accountKey() {
   const token = localStorage.getItem('kloppy-session') ?? 'anonymous'
@@ -332,7 +334,7 @@ function ActivityFeed({ events, live = false }: { events: AgentActivity[]; live?
   </section>
 }
 
-function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampaign }: { fullPage?: boolean; campaignId?: string; campaignName?: string; onSpinOffCampaign?: (name: string, messages: ChatMessage[]) => void }) {
+function Assistant({ fullPage = false, campaignId, campaignName, campaignSections, onSpinOffCampaign, onCampaignSections }: { fullPage?: boolean; campaignId?: string; campaignName?: string; campaignSections?: CampaignSections; onSpinOffCampaign?: (name: string, messages: ChatMessage[]) => void; onCampaignSections?: (campaignId: string, sections: CampaignSections) => void }) {
   const historyKey = campaignId ? `kloppy-chat:${accountKey()}:${campaignId}` : null
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     if (historyKey) { try { const saved = localStorage.getItem(historyKey); if (saved) return JSON.parse(saved) as ChatMessage[] } catch { /* recover with a fresh conversation */ } }
@@ -384,14 +386,17 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
           }
           const lowerError = data.error?.toLowerCase() ?? ''
           const errorMessage = lowerError.includes('schema cache') || lowerError.includes('user_settings')
-            ? 'Kloppy can’t read your saved settings yet. Apply backend/db/003_user_settings.sql in Supabase, then retry.'
+            ? 'Kloppy can’t access your saved workspace settings yet. Please try again in a moment.'
             : data.error_code === 'authentication_required'
               ? 'Your session has expired. Sign in again to continue.'
               : lowerError.includes('not configured')
-            ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.'
+            ? 'Kloppy’s assistant is not available yet. Please try again in a moment.'
             : data.error ? 'I couldn’t complete that just now. Please try again in a moment.' : undefined
           setMessages((items) => [...items, { role: 'agent', text: data.reply ?? errorMessage ?? 'The agent returned no response.', artifact: data.artifact, activities: data.activities }])
-          if (data.artifact) setViewer(data.artifact)
+          if (data.artifact) {
+            setViewer(data.artifact)
+            if (campaignId && data.artifact.sections) onCampaignSections?.(campaignId, data.artifact.sections)
+          }
           setActivities([])
           setBusy(false)
         }
@@ -414,22 +419,25 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
       role: message.role === 'agent' ? 'assistant' as const : 'user' as const,
       content: message.text,
     }))
-    const payload = { message: value, attachments: files, context_items: contextItems, conversation_history, campaign_id: campaignId, campaign_name: campaignName }
+    const payload = { message: value, attachments: files, context_items: contextItems, conversation_history, campaign_id: campaignId, campaign_name: campaignName, campaign_sections: campaignId ? campaignSections ?? {} : undefined }
     setMessages((items) => [...items, { role: 'user', text: value }]); setInput(''); setBusy(true); setActivities([{ label: 'Connecting campaign context and available tools', status: 'working' }])
     if (socket?.readyState === WebSocket.OPEN) { socket.send(JSON.stringify(payload)); return }
     try {
       const data = await request<{ reply: string; artifact?: DocumentArtifact; activities?: AgentActivity[] }>('/assistant/chat', { method: 'POST', body: JSON.stringify(payload) })
       setMessages((items) => [...items, { role: 'agent', text: data.reply, artifact: data.artifact, activities: data.activities }])
-      if (data.artifact) setViewer(data.artifact)
+      if (data.artifact) {
+        setViewer(data.artifact)
+        if (campaignId && data.artifact.sections) onCampaignSections?.(campaignId, data.artifact.sections)
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : ''
       const lower = detail.toLowerCase()
       const message = lower.includes('schema cache') || lower.includes('user_settings')
-        ? 'Kloppy can’t read your saved settings yet. Apply backend/db/003_user_settings.sql in Supabase, then retry.'
+        ? 'Kloppy can’t access your saved workspace settings yet. Please try again in a moment.'
         : lower.includes('authentication')
           ? 'Your session has expired. Sign in again to continue.'
           : lower.includes('not configured')
-            ? 'I’m not connected to my AI service yet. Add OPENROUTER_API_KEY to backend/.env, then restart the API.'
+            ? 'Kloppy’s assistant is not available yet. Please try again in a moment.'
             : error instanceof ApiConnectionError || error instanceof ApiRequestError
               ? detail
               : 'I couldn’t reach the campaign service just now. Please try again in a moment.'
@@ -441,10 +449,17 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
   }
 
   const downloadArtifact = (artifact: DocumentArtifact) => {
-    const url = URL.createObjectURL(new Blob([artifact.content], { type: 'text/markdown;charset=utf-8' }))
+    const isDocx = artifact.format === 'docx' && Boolean(artifact.docx_base64)
+    const bytes = isDocx
+      ? Uint8Array.from(atob(artifact.docx_base64!), (character) => character.charCodeAt(0))
+      : new TextEncoder().encode(artifact.content)
+    const mimeType = isDocx
+      ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      : 'text/markdown;charset=utf-8'
+    const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }))
     const link = document.createElement('a')
     link.href = url
-    link.download = artifact.filename || `${artifact.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.md`
+    link.download = artifact.filename || `${artifact.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.${isDocx ? 'docx' : 'md'}`
     link.click()
     URL.revokeObjectURL(url)
   }
@@ -468,7 +483,7 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
   const userHasSpoken = messages.some((message) => message.role === 'user')
   const startSpinOff = () => { const firstPrompt = messages.find((message) => message.role === 'user')?.text ?? ''; setSpinOffName(firstPrompt.trim().slice(0, 60)); setSpinOffOpen(true) }
   return <aside className={`assistant-panel ${fullPage ? 'full-page-chat' : ''}`}>
-    <div className="assistant-head"><div><h2>What should we make true?</h2><span className="assistant-runtime"><span className="live-dot" /> {socket ? 'Live via WebSocket' : 'Ready for a message'}</span></div><button className="more-button" aria-label="Assistant options"><Icon name="dots" /></button></div>
+    <div className="assistant-head"><div><h2>What should we make true?</h2><span className="assistant-runtime"><span className="live-dot" /> {socket ? 'Connected' : 'Ready for a message'}</span></div><button className="more-button" aria-label="Assistant options"><Icon name="dots" /></button></div>
     {messages.length === 0 && fullPage && <section className="chat-empty-state" aria-labelledby="chat-empty-title"><span className="chat-empty-mark"><KloppyMark /></span><h1 id="chat-empty-title">{campaignId ? `What would you like to make true for ${campaignName}?` : 'What are you launching?'}</h1><p>{campaignId ? 'Share the outcome you want from this campaign. Kloppy will keep the conversation, research, and drafts in this campaign’s workspace.' : 'Tell Kloppy about the product, the people you want to reach, or the result you want to create. We’ll shape the next move together.'}</p><div className="chat-starters" aria-label="Suggested starting points">{(campaignId ? ['Shape the campaign brief', 'Find the right audience', 'Draft launch messaging'] : ['We’re launching a new product', 'Help me find the right audience', 'Shape a campaign from my brief']).map((prompt) => <button type="button" key={prompt} onClick={() => { setInput(prompt); inputRef.current?.focus() }}>{prompt}<Icon name="arrow" size={14} /></button>)}</div></section>}
     <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div>{message.role === 'agent' ? <FormattedText text={message.text} /> : <p>{message.text}</p>}{message.activities && <ActivityFeed events={message.activities} />}{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><div><ActivityFeed events={activities} live /><p className="working-copy">Kloppy is preparing your response.</p></div></div>}</div>
     {!campaignId && userHasSpoken && <div className="conversation-actions"><button type="button" className="text-button" onClick={startSpinOff}><Icon name="plus" size={14} /> Spin off as a campaign</button>{spinOffOpen && <form onSubmit={(event) => { event.preventDefault(); if (spinOffName.trim()) onSpinOffCampaign?.(spinOffName.trim(), messages) }}><input aria-label="New campaign name" autoFocus value={spinOffName} onChange={(event) => setSpinOffName(event.target.value)} placeholder="Name this campaign" maxLength={200} required /><button className="button primary" type="submit"><Icon name="arrow" size={14} /> Create campaign</button><button type="button" className="text-button" onClick={() => setSpinOffOpen(false)}>Cancel</button></form>}</div>}
@@ -476,15 +491,15 @@ function Assistant({ fullPage = false, campaignId, campaignName, onSpinOffCampai
     {menuOpen && <div className="composer-menu"><label className="menu-action"><Icon name="file" size={15} /> Add files<input type="file" multiple onChange={addFile} /></label><button className={contextItems.includes('Brand knowledge') ? 'selected' : ''} onClick={() => addContext('Brand knowledge')}><Icon name="book" size={15} /> Brand knowledge</button><button className={contextItems.includes('Campaign skills') ? 'selected' : ''} onClick={() => addContext('Campaign skills')}><Icon name="spark" size={15} /> Campaign skills</button></div>}
     <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}><div className="composer-main"><button type="button" className={`composer-plus ${menuOpen ? 'active' : ''}`} aria-label="Add files, knowledge, or skills" onClick={() => setMenuOpen(!menuOpen)}><Icon name="plus" size={18} /></button><textarea ref={inputRef} aria-label="Ask Kloppy" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} placeholder="Ask Kloppy…" rows={1} /><button type="submit" className="composer-send" aria-label="Send message" disabled={!input.trim() || busy}><Icon name="send" size={17} /></button></div><div className="composer-controls"><label className="composer-select"><Icon name="lock" size={13} /><select aria-label="Permission policy" value={permission} onChange={(e) => void savePermissionPolicy(e.target.value as PermissionPolicy)}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label></div></form>
     <span className="assistant-note">{permissionSaveError || (permission === 'ask' ? 'Kloppy checks your saved settings and asks before consequential actions.' : 'Drafts may run automatically; publishing and spend still require your explicit approval.')}</span>
-    {viewer && <div className="artifact-viewer" role="dialog" aria-modal="true" aria-labelledby="artifact-title"><div className="artifact-head"><div><span className="eyebrow">Markdown draft · ready to review</span><h3 id="artifact-title">{viewer.title}</h3></div><div className="artifact-actions"><button className="button secondary" onClick={() => downloadArtifact(viewer)}><Icon name="file" size={14} /> Download .md</button><button className="more-button" aria-label="Close document" onClick={() => setViewer(undefined)}>×</button></div></div><div className="document-preview"><FormattedText text={viewer.content} /></div></div>}
+    {viewer && <div className="artifact-viewer" role="dialog" aria-modal="true" aria-labelledby="artifact-title"><div className="artifact-head"><div><span className="eyebrow">{viewer.format === 'docx' ? 'Word document · ready to review' : 'Document draft · ready to review'}</span><h3 id="artifact-title">{viewer.title}</h3></div><div className="artifact-actions"><button className="button secondary" onClick={() => downloadArtifact(viewer)}><Icon name="file" size={14} /> Download {viewer.format === 'docx' ? '.docx' : 'document'}</button><button className="more-button" aria-label="Close document" onClick={() => setViewer(undefined)}>×</button></div></div><div className="document-preview">{viewer.sections ? Object.entries({ overview: 'Overview', audience: 'Audience', strategy: 'Strategy', launch: 'Launch & Learn' } as const).map(([key, heading]) => <section key={key}><h2>{heading}</h2>{viewer.sections?.[key as keyof CampaignSections] && <FormattedText text={viewer.sections[key as keyof CampaignSections]!} />}</section>) : <FormattedText text={viewer.content} />}</div></div>}
   </aside>
 }
 
-function ChatPage({ campaignId, campaignName, onSpinOffCampaign }: { campaignId?: string; campaignName?: string; onSpinOffCampaign: (name: string, messages: ChatMessage[]) => void }) {
-  return <section className="chat-page"><Assistant fullPage campaignId={campaignId} campaignName={campaignName} onSpinOffCampaign={onSpinOffCampaign} /></section>
+function ChatPage({ campaignId, campaignName, campaignSections, onSpinOffCampaign, onCampaignSections }: { campaignId?: string; campaignName?: string; campaignSections?: CampaignSections; onSpinOffCampaign: (name: string, messages: ChatMessage[]) => void; onCampaignSections?: (campaignId: string, sections: CampaignSections) => void }) {
+  return <section className="chat-page"><Assistant fullPage campaignId={campaignId} campaignName={campaignName} campaignSections={campaignSections} onSpinOffCampaign={onSpinOffCampaign} onCampaignSections={onCampaignSections} /></section>
 }
 
-function Overview({ campaignName, onNavigate }: { campaignName: string; onNavigate: (prompt: string) => void }) {
+function Overview({ campaignName, sections, onNavigate }: { campaignName: string; sections: CampaignSections; onNavigate: (prompt: string) => void }) {
   const steps = [
     { title: 'Brief', detail: 'Add product and launch context', icon: 'brief' as IconName },
     { title: 'Audience', detail: 'Explore evidence and hypotheses', icon: 'insights' as IconName },
@@ -493,10 +508,11 @@ function Overview({ campaignName, onNavigate }: { campaignName: string; onNaviga
     { title: 'Launch', detail: 'Review before action', icon: 'play' as IconName },
   ]
   const startBrief = 'Help me shape the brief for this campaign.'
+  const hasCampaignWork = Object.values(sections).some((section) => Boolean(section?.trim()))
   return <>
-    <section className="page-heading campaign-overview-heading"><div><div className="heading-meta">Campaign workspace · Brief not started</div><h1>{campaignName}</h1><p className="heading-copy">This campaign has its own conversation and work. Start with the brief; Kloppy will keep decisions and drafts under this campaign.</p></div><button className="button primary" onClick={() => onNavigate(startBrief)}><KloppyMark /> Open Kloppy</button></section>
-    <section className="journey-panel"><div className="journey-header"><div><span className="section-kicker">Campaign journey</span><h2>One campaign, from brief to learning</h2></div><span className="journey-status">Ready for your brief</span></div><div className="journey-track">{steps.map((step, index) => <div className={`journey-step ${index === 0 ? 'current' : 'next'}`} key={step.title}><div className="journey-node"><Icon name={step.icon} size={17} /></div><span>{step.title}</span><small>{step.detail}</small></div>)}</div></section>
-    <div className="campaign-overview-grid"><article className="panel overview-empty-card"><span className="section-kicker">Start here</span><h2>Give Kloppy the campaign brief.</h2><p>Share the product, the people you want to reach, and what a successful launch would make true. Start with only what you know.</p><button className="text-button" onClick={() => onNavigate(startBrief)}><KloppyMark /> Add campaign context <Icon name="arrow" size={14} /></button></article><aside className="overview-next-card"><Icon name="activity" size={19} /><span className="section-kicker">Next step</span><h2>No audience or strategy saved yet.</h2><p>Kloppy will show campaign-specific work here after you create it in this campaign’s chat.</p><button className="button secondary" onClick={() => onNavigate(startBrief)}>Continue in Kloppy <Icon name="arrow" size={14} /></button></aside></div>
+    <section className="page-heading campaign-overview-heading"><div><div className="heading-meta">{hasCampaignWork ? 'Campaign workspace · Work in progress' : 'Campaign workspace · Ready for your brief'}</div><h1>{campaignName}</h1><p className="heading-copy">One campaign brief, carried through audience, strategy, and launch. Kloppy keeps each decision connected here.</p></div><button className="button primary" onClick={() => onNavigate(startBrief)}><KloppyMark /> Open Kloppy</button></section>
+    <section className="journey-panel"><div className="journey-header"><div><span className="section-kicker">Campaign journey</span><h2>One campaign, from brief to learning</h2></div><span className="journey-status">{hasCampaignWork ? 'Campaign work saved' : 'Ready for your brief'}</span></div><div className="journey-track">{steps.map((step, index) => <div className={`journey-step ${index === 0 ? 'current' : 'next'}`} key={step.title}><div className="journey-node"><Icon name={step.icon} size={17} /></div><span>{step.title}</span><small>{step.detail}</small></div>)}</div></section>
+    {sections.overview ? <section className="panel campaign-section-content"><div className="stage-title"><div className="integration-icon"><Icon name="brief" size={21} /></div><div><span className="section-kicker">Campaign overview</span><h2>Brief and direction</h2></div></div><FormattedText text={sections.overview} /></section> : <div className="campaign-overview-grid"><article className="panel overview-empty-card"><span className="section-kicker">Start here</span><h2>Give Kloppy the campaign brief.</h2><p>Share the product, the people you want to reach, and what a successful launch would make true. Start with only what you know. Kloppy can then fill the campaign sections and prepare a Word document.</p><button className="text-button" onClick={() => onNavigate(startBrief)}><KloppyMark /> Add campaign context <Icon name="arrow" size={14} /></button></article><aside className="overview-next-card"><Icon name="activity" size={19} /><span className="section-kicker">Next step</span><h2>Build the campaign from one brief.</h2><p>Ask Kloppy to develop the audience, strategy, and launch plan together. Saved work will appear in each section.</p><button className="button secondary" onClick={() => onNavigate(startBrief)}>Continue in Kloppy <Icon name="arrow" size={14} /></button></aside></div>}
   </>
 }
 
@@ -508,169 +524,17 @@ function CampaignList({ campaigns, onCreate, onOpen }: { campaigns: Campaign[]; 
   return <><div className="page-heading compact campaigns-heading"><div><div className="heading-meta">Campaign workspaces</div><h1>Every campaign has its own room.</h1><p className="heading-copy">Each campaign keeps a separate name, conversation, and working context.</p></div><div className="campaign-create-anchor"><button className="button primary campaign-create-trigger" type="button" aria-expanded={createOpen} aria-controls="campaign-create-popover" onClick={() => setCreateOpen((open) => !open)}><Icon name="plus" size={16} /><span>Create new campaign</span></button>{createOpen && <form id="campaign-create-popover" className="campaign-create-popover" onSubmit={(event) => { event.preventDefault(); if (name.trim()) { onCreate(name.trim()); setName(''); setCreateOpen(false) } }}><h2>Give this campaign a name.</h2><label htmlFor="campaign-name">Campaign name</label><input ref={createInput} id="campaign-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Spring product launch" maxLength={200} required /><div className="campaign-create-actions"><button className="button secondary" type="button" onClick={() => { setCreateOpen(false); setName('') }}>Cancel</button><button className="button primary" type="submit" disabled={!name.trim()}><Icon name="plus" size={15} /> Create campaign</button></div></form>}</div></div><section className="campaign-list" aria-label="Your campaigns">{campaigns.length ? campaigns.map((campaign) => <button className="campaign-list-item panel" key={campaign.id} onClick={() => onOpen(campaign)}><span className="integration-icon"><Icon name="campaigns" size={20} /></span><span><small>Campaign workspace</small><strong>{campaign.name}</strong><small>Created {new Date(campaign.createdAt).toLocaleDateString()}</small></span><Icon name="arrow" size={16} /></button>) : <div className="panel campaign-empty"><span className="section-kicker">No campaigns yet</span><h2>Name the first one to get started.</h2><p>Your campaign chat and decisions will be saved under its name.</p></div>}</section></>
 }
 
-function StagePage({ page, onAsk, onCampaignOpen, searchQuery = '' }: { page: 'campaigns' | 'audience' | 'strategy' | 'launch'; onAsk: (prompt: string) => void; onCampaignOpen?: () => void; searchQuery?: string }) {
-  if (page === 'audience') return <QlooWorkspace onAsk={onAsk} />
+function StagePage({ page, sections, onAsk }: { page: 'audience' | 'strategy' | 'launch'; sections: CampaignSections; onAsk: (prompt: string) => void }) {
   const content = {
-    campaigns: { eyebrow: 'Campaign history', title: 'Every launch, still useful.', copy: 'Open a named campaign to keep its conversation, decisions, and drafts together.', action: 'Start a campaign', icon: 'campaigns' as IconName, items: ['Create a named campaign', 'Open a campaign workspace'] },
-    audience: { eyebrow: 'Audience intelligence', title: 'Know who to make it for.', copy: 'Build audience hypotheses from the product brief and available evidence. Qloo signals are directional, never proof of purchase intent.', action: 'Ask Kloppy for an audience read', icon: 'insights' as IconName, items: ['Share the product and market', 'Explore cultural affinity signals', 'Compare audience hypotheses'] },
-    strategy: { eyebrow: 'Strategy', title: 'Make the next decision clearer.', copy: 'Connect positioning, messages, channels, and success measures to this campaign’s brief and audience evidence.', action: 'Ask Kloppy to develop strategy', icon: 'strategy' as IconName, items: ['Draft positioning and promise', 'Build message pillars', 'Choose channels and success measures'] },
-    launch: { eyebrow: 'Launch & learn', title: 'Move from ready to live.', copy: 'Review what is approved, check which tools are connected, and prepare the measurement plan before launch.', action: 'Ask Kloppy to prepare a launch review', icon: 'trend' as IconName, items: ['Review campaign approvals', 'Check connected publishing tools', 'Prepare a measurement plan'] },
+    audience: { title: 'Audience', intro: 'Who this campaign is for, what they care about, and which assumptions still need testing.', action: 'Develop the audience for this campaign.', icon: 'insights' as IconName },
+    strategy: { title: 'Strategy', intro: 'The campaign direction, promise, messages, channels, and measures connected to the audience.', action: 'Develop the strategy for this campaign.', icon: 'strategy' as IconName },
+    launch: { title: 'Launch & learn', intro: 'What is ready to approve, how the campaign will be measured, and what to learn next.', action: 'Prepare the launch and learning plan for this campaign.', icon: 'trend' as IconName },
   }[page]
-  const filteredItems = content.items.filter((item) => !searchQuery.trim() || item.toLowerCase().includes(searchQuery.toLowerCase()))
-  return <><div className="page-heading compact"><div><div className="heading-meta">{content.eyebrow}</div><h1>{content.title}</h1><p className="heading-copy">{content.copy}</p></div><button className="button primary" onClick={() => onAsk(content.action)}><KloppyMark /> Kloppy</button></div><section className="stage-layout"><div className="stage-main panel"><div className="stage-title"><div className="integration-icon"><Icon name={content.icon} size={21} /></div><div><span className="section-kicker">Campaign work</span><h2>{content.action}</h2></div></div><p className="stage-description">This view stays scoped to the selected campaign. Ask Kloppy to create the work, then review what has actually been saved here.</p><div className="stage-items">{filteredItems.length ? filteredItems.map((item, index) => <button key={item} onClick={() => page === 'campaigns' ? onCampaignOpen?.() : onAsk(`${content.action}: ${item}`)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item}</strong><Icon name="arrow" size={15} /></button>) : <div className="stage-empty">No actions match “{searchQuery}”. Try another search.</div>}</div></div><aside className="stage-aside"><span className="section-kicker">Campaign context</span><h2>Work stays with this campaign.</h2><p>Kloppy keeps the conversation for this campaign separate from your other campaign workspaces.</p><button className="text-button" onClick={() => onAsk(content.action)}><KloppyMark /> Open Kloppy <Icon name="arrow" size={14} /></button></aside></section></>
-}
-
-function QlooWorkspace({ onAsk }: { onAsk: (prompt: string) => void }) {
-  const [capability, setCapability] = useState<QlooCapability>('recommendations')
-  const [query, setQuery] = useState('')
-  const [entityCategory, setEntityCategory] = useState<(typeof qlooEntityCategories)[number]>('brand')
-  const [resultCategory, setResultCategory] = useState<(typeof qlooEntityCategories)[number]>('brand')
-  const [interestsInput, setInterestsInput] = useState('')
-  const [location, setLocation] = useState('')
-  const [goal, setGoal] = useState('')
-  const [result, setResult] = useState<QlooResponse | null>(null)
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  const interests = interestsInput.split(/[,\n]/).map((value) => value.trim()).filter(Boolean).slice(0, 8)
-  const rankedSnapshot = result?.snapshot?.items
-    ? [...result.snapshot.items].sort((left, right) => {
-      const tokens = [...new Set([...interests, query].join(' ').toLowerCase().match(/[a-z0-9]+/g) ?? [])]
-      const localScore = (entity: QlooEntity) => {
-        const text = `${JSON.stringify(entity.properties ?? {})} ${(entity.tags ?? []).map((tag) => tag.name ?? '').join(' ')}`.toLowerCase()
-        return tokens.reduce((score, token) => score + (text.includes(token) ? 1 : 0), 0)
-      }
-      return localScore(right) - localScore(left) || (left.rank ?? 0) - (right.rank ?? 0)
-    })
-    : []
-
-  const run = async (event: FormEvent) => {
-    event.preventDefault()
-    setBusy(true)
-    setError('')
-    setResult(null)
-    try {
-      const response = await request<QlooResponse>('/qloo/run', {
-        method: 'POST',
-        body: JSON.stringify({
-          capability,
-          query: query.trim() || null,
-          entity_category: entityCategory,
-          result_category: resultCategory,
-          interests,
-          location: location.trim() || null,
-          goal: goal.trim() || null,
-          take: capability === 'locality' ? 20 : 10,
-        }),
-      })
-      setResult(response)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Qloo could not complete this request.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const downloadSnapshot = () => {
-    if (!result?.snapshot) return
-    const href = URL.createObjectURL(new Blob([JSON.stringify(result.snapshot, null, 2)], { type: 'application/json' }))
-    const anchor = document.createElement('a')
-    anchor.href = href
-    anchor.download = 'kloppy-qloo-snapshot.json'
-    anchor.click()
-    URL.revokeObjectURL(href)
-  }
-
-  const useInCampaign = () => {
-    if (!result) return
-    const entities = result.results.slice(0, 6).map((entity) => {
-      const details = entity.description ? ` — ${entity.description}` : ''
-      return `- ${entity.name ?? 'Unnamed Qloo result'}${details}`
-    })
-    onAsk([
-      `Use these live Qloo results as directional cultural evidence for the current campaign.`,
-      `Capability: ${result.capability}. Source: ${result.source}.`,
-      `Interpretation boundary: ${result.interpretation}`,
-      `Qloo options, in provider order:\n${entities.join('\n') || '(No result entities were returned.)'}`,
-      `Use this evidence to inform an audience hypothesis or campaign direction, keep it separate from verified business facts, and do not claim purchase intent.`,
-    ].join('\n\n'))
-  }
-
-  const activeCapability = qlooCapabilities.find((item) => item.id === capability)!
-  const displayedResults = capability === 'on_device' && rankedSnapshot.length ? rankedSnapshot : result?.results ?? []
-  return <section className="qloo-workspace" aria-labelledby="qloo-title">
-    <header className="qloo-heading">
-      <div>
-        <span className="heading-meta"><span className="live-dot" /> Kloppy · cultural intelligence <span className="meta-divider">/</span> Built in</span>
-        <h1 id="qloo-title">Ground choices in real taste.</h1>
-        <p className="heading-copy">Qloo is part of Kloppy’s audience research by default. Its cultural-affinity signals help shape campaign hypotheses; they do not prove purchase intent or describe an individual.</p>
-      </div>
-    </header>
-
-    <nav className="qloo-capabilities" aria-label="Qloo capabilities">
-      {qlooCapabilities.map((item) => <button key={item.id} type="button" aria-pressed={capability === item.id} className={capability === item.id ? 'active' : ''} onClick={() => { setCapability(item.id); setResult(null); setError('') }}>
-        <span>{item.label}</span><small>{item.detail}</small>
-      </button>)}
-    </nav>
-
-    <div className="qloo-grid">
-      <form className="qloo-context panel" onSubmit={run}>
-        <div className="panel-head"><div><span className="section-kicker">Request context</span><h2>{activeCapability.label}</h2></div><span className="qloo-built-in">Built in</span></div>
-        <p className="qloo-form-copy">{activeCapability.detail} Results come from Qloo’s live API and stay scoped to this campaign.</p>
-        <label className="qloo-field">Starting entity or record
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. ACHA, Nike, contemporary dance" maxLength={160} />
-        </label>
-        <div className="qloo-field-grid">
-          <label className="qloo-field">Entity category
-            <select value={entityCategory} onChange={(event) => setEntityCategory(event.target.value as typeof entityCategory)}>
-              {qlooEntityCategories.map((category) => <option key={category} value={category}>{category.replace('_', ' ')}</option>)}
-            </select>
-          </label>
-          {['recommendations', 'locality', 'grounding', 'on_device'].includes(capability) && <label className="qloo-field">Explore results in
-            <select value={resultCategory} onChange={(event) => setResultCategory(event.target.value as typeof resultCategory)}>
-              {qlooEntityCategories.map((category) => <option key={category} value={category}>{category.replace('_', ' ')}</option>)}
-            </select>
-          </label>}
-        </div>
-        <label className="qloo-field">Interests <span>comma separated</span>
-          <textarea value={interestsInput} onChange={(event) => setInterestsInput(event.target.value)} placeholder="fashion, footwear, streetwear" rows={3} maxLength={800} />
-        </label>
-        <label className="qloo-field">Location <span>optional, required for locality</span>
-          <input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="City, neighborhood, or region" maxLength={160} />
-        </label>
-        <label className="qloo-field">Campaign goal <span>used as Kloppy context</span>
-          <input value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="What should this campaign help achieve?" maxLength={500} />
-        </label>
-        {error && <p className="qloo-error" role="alert">{error}</p>}
-        <button className="button primary qloo-run" type="submit" disabled={busy || (capability === 'enrichment' && !query.trim()) || (capability === 'locality' && (!location.trim() || (!query.trim() && !interests.length)))}>
-          {busy ? 'Connecting to Qloo…' : 'Run capability'} <Icon name="arrow" size={15} />
-        </button>
-      </form>
-
-      <section className="qloo-output panel" aria-live="polite" aria-busy={busy}>
-        <div className="panel-head"><div><span className="section-kicker">Grounded output</span><h2>{result ? result.source : 'Your structured result'}</h2></div>{result && <span className="qloo-source">Live Qloo source</span>}</div>
-        {!result && !busy && <div className="qloo-empty"><Icon name="insights" size={24} /><p>Choose a capability and run a request. Qloo results will appear here with their source and interpretation limits.</p></div>}
-        {busy && <div className="qloo-empty"><span className="qloo-loading" /><p>Requesting cultural-affinity data from Qloo…</p></div>}
-        {result && <>
-          <p className="qloo-interpretation">{result.interpretation}</p>
-          {result.ranking_basis && <p className="qloo-ranking">{result.ranking_basis}</p>}
-          {displayedResults.length > 0 ? <ol className="qloo-results">
-            {displayedResults.slice(0, 20).map((entity, index) => <li key={`${entity.entity_id ?? entity.name ?? 'result'}-${index}`}>
-              <span className="qloo-rank">{capability === 'on_device' ? `Local ${index + 1}` : `#${entity.rank ?? index + 1}`}</span>
-              <div><strong>{entity.name ?? 'Qloo result'}</strong>{entity.description && <p>{entity.description}</p>}
-                {entity.types?.length ? <small>{entity.types.join(' · ')}</small> : null}
-                {entity.tags?.length ? <small>{entity.tags.map((tag) => tag.name).filter(Boolean).join(' · ')}</small> : null}
-                {entity.affinity !== undefined && entity.affinity !== null && <small>Affinity {entity.affinity.toFixed(3)}{entity.affinity_rank != null ? ` · relative rank ${entity.affinity_rank.toFixed(3)}` : ''}</small>}
-                {entity.properties && Object.entries(entity.properties).filter(([key]) => ['keywords', 'genres', 'genre', 'industries', 'brand_type'].includes(key)).slice(0, 3).map(([key, value]) => <small key={key}>{key.replace('_', ' ')}: {Array.isArray(value) ? value.join(', ') : String(value)}</small>)}
-              </div>
-            </li>)}
-          </ol> : <p className="qloo-no-results">Qloo returned no matching results for this context. Try a broader entity, different interests, or another location.</p>}
-          {result.heatmap && <div className="qloo-heatmap"><h3>Locality heatmap points</h3><p>Qloo returned {result.heatmap.length} mapped points. Each point contains coordinates and provider-supplied affinity metrics.</p><ul>{result.heatmap.slice(0, 5).map((point) => <li key={`${point.latitude}-${point.longitude}`}>{point.latitude?.toFixed(4)}, {point.longitude?.toFixed(4)}{point.affinity_rank != null ? ` · affinity rank ${point.affinity_rank.toFixed(3)}` : ''}</li>)}</ul></div>}
-          {result.snapshot && <div className="qloo-snapshot-actions"><p>Snapshot retrieved from Qloo, then re-ranked in this browser using text overlap with the entered interests. Local order is not a new Qloo score.</p><button className="button secondary" type="button" onClick={downloadSnapshot}><Icon name="file" size={15} /> Download snapshot</button></div>}
-          {result.results.length > 0 && <button className="button secondary qloo-use-results" type="button" onClick={useInCampaign}><KloppyMark /> Use this evidence with Kloppy</button>}
-        </>}
-      </section>
-    </div>
-  </section>
+  const section = sections[page]
+  return <>
+    <div className="page-heading compact"><div><div className="heading-meta">Campaign work</div><h1>{content.title}</h1><p className="heading-copy">{content.intro}</p></div><button className="button primary" onClick={() => onAsk(content.action)}><KloppyMark /> Ask Kloppy</button></div>
+    <section className="stage-layout"><article className="stage-main panel campaign-section-content"><div className="stage-title"><div className="integration-icon"><Icon name={content.icon} size={21} /></div><div><span className="section-kicker">{section ? 'Saved campaign work' : 'Ready to develop'}</span><h2>{content.title}</h2></div></div>{section ? <FormattedText text={section} /> : <div className="campaign-section-empty"><p>There is no {content.title.toLowerCase()} work saved here yet. Ask Kloppy to develop it from the campaign brief; it will also update the other relevant sections.</p><button className="button secondary" onClick={() => onAsk(content.action)}><KloppyMark /> Develop with Kloppy <Icon name="arrow" size={14} /></button></div>}</article><aside className="stage-aside"><span className="section-kicker">One connected campaign</span><h2>Every section stays in context.</h2><p>Kloppy carries the same brief and decisions through audience, strategy, and launch, then keeps the finished work together in a Word document.</p><button className="text-button" onClick={() => onAsk('Review the campaign so far and update the relevant sections.') }><KloppyMark /> Review with Kloppy <Icon name="arrow" size={14} /></button></aside></section>
+  </>
 }
 
 function Knowledge({ onNavigate }: { onNavigate: (page: Page) => void }) {
@@ -692,17 +556,6 @@ function Knowledge({ onNavigate }: { onNavigate: (page: Page) => void }) {
       setSources((items) => [saved, ...items]); setTitle(''); setContent(''); setTextOpen(false); setAddMenuOpen(false)
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not save this source.') } finally { setBusy(false) }
   }
-  const addAchaDemo = async () => {
-    if (sources.some((source) => source.title === achaDemoTitle)) return
-    setBusy(true); setError('')
-    try {
-      const saved = await request<KnowledgeSource>('/knowledge/sources', {
-        method: 'POST',
-        body: JSON.stringify({ title: achaDemoTitle, content: achaDemoContent, source_type: 'brand_text' }),
-      })
-      setSources((items) => [saved, ...items])
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not add the ACHA demo brief.') } finally { setBusy(false) }
-  }
   const uploadDocument = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]; event.target.value = ''
     if (!file) return
@@ -719,7 +572,7 @@ function Knowledge({ onNavigate }: { onNavigate: (page: Page) => void }) {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not remove this source.') }
   }
   return <>
-    <div className="page-heading compact"><div><div className="heading-meta">Workspace knowledge</div><h1>Give Kloppy the right context.</h1><p className="heading-copy">Save the facts, voice, and product details Kloppy should use across your campaigns.</p></div><div className="knowledge-actions"><button className="button secondary" onClick={() => onNavigate('integrations')}><Icon name="plug" size={16} /> Connect a source</button><button className="button secondary" type="button" onClick={() => void addAchaDemo()} disabled={busy || loading || sources.some((source) => source.title === achaDemoTitle)}>{sources.some((source) => source.title === achaDemoTitle) ? 'ACHA brief added' : 'Add ACHA demo brief'}</button><button className="button primary" onClick={() => setAddMenuOpen(!addMenuOpen)}><Icon name="plus" size={16} /> Add a source</button></div></div>
+    <div className="page-heading compact"><div><div className="heading-meta">Workspace knowledge</div><h1>Give Kloppy the right context.</h1><p className="heading-copy">Save the facts, voice, and product details Kloppy should use across your campaigns.</p></div><div className="knowledge-actions"><button className="button secondary" onClick={() => onNavigate('integrations')}><Icon name="plug" size={16} /> Connect a source</button><button className="button primary" onClick={() => setAddMenuOpen(!addMenuOpen)}><Icon name="plus" size={16} /> Add a source</button></div></div>
     {addMenuOpen && <div className="knowledge-add-menu"><button onClick={() => documentRef.current?.click()} disabled={busy}><Icon name="file" size={15} /> Add a document <small>PDF, DOCX, TXT, or Markdown · 8 MB max</small></button><button onClick={() => { setTextOpen(true); setAddMenuOpen(false) }}><Icon name="book" size={15} /> Add brand text <small>Save positioning, voice, product facts, and guidelines</small></button><input ref={documentRef} type="file" accept=".pdf,.docx,.txt,.md,text/plain,text/markdown,application/pdf" onChange={uploadDocument} hidden /></div>}
     {textOpen && <form className="brand-source-form panel" onSubmit={saveText}><div><h2>Add brand context</h2><p>Kloppy will use this as user-provided context in future conversations.</p></div><label>Source title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Brand voice or product facts" maxLength={200} required /></label><label>Brand information<textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="Describe your brand, product, audience, claims to avoid, or preferred voice…" maxLength={100000} rows={7} required /></label><div className="brand-source-actions"><button type="button" className="button secondary" onClick={() => setTextOpen(false)}>Cancel</button><button type="submit" className="button primary" disabled={busy || !title.trim() || !content.trim()}>{busy ? 'Saving…' : 'Save source'} <Icon name="arrow" size={14} /></button></div></form>}
     {error && <div className="knowledge-error" role="alert">{error}</div>}
@@ -752,7 +605,7 @@ function Integrations({ searchQuery = '' }: { searchQuery?: string }) {
     try {
       const result = await request<{ read_only_tools: string[] }>('/integrations/discover', { method: 'POST', body: JSON.stringify({ server_url: serverUrl, access_token: accessToken || null }) })
       setToolOptions(result.read_only_tools); setSelectedTools((current) => current.filter((tool) => result.read_only_tools.includes(tool)))
-      if (!result.read_only_tools.length) setError('This MCP server did not advertise any read-only tools.')
+      if (!result.read_only_tools.length) setError('No available capabilities were found for this service.')
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not inspect this server.') } finally { setDiscovering(false) }
   }
   const saveConnection = async (event: FormEvent) => {
@@ -771,11 +624,11 @@ function Integrations({ searchQuery = '' }: { searchQuery?: string }) {
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not disconnect this service.') }
   }
   const visible = items.filter((item) => (filter === 'All' || item.kind === filter.slice(0, -1)) && (!searchQuery.trim() || `${item.name} ${item.category} ${item.description}`.toLowerCase().includes(searchQuery.toLowerCase())))
-  return <><div className="page-heading compact"><div><h1>Connect the tools Kloppy uses.</h1><p className="heading-copy">Connect an MCP server to share its read-only tools with Kloppy. Each connection is verified and saved securely to your account.</p></div><button className="button primary" onClick={() => openConnection('custom')}><Icon name="plus" size={16} /> Add custom</button></div>
+  return <><div className="page-heading compact"><div><h1>Connect the tools Kloppy uses.</h1><p className="heading-copy">Connect the services your team already uses. Kloppy can then work with the capabilities you choose to share.</p></div><button className="button primary" onClick={() => openConnection('custom')}><Icon name="plus" size={16} /> Add custom</button></div>
     {error && <div className="knowledge-error" role="alert">{error}</div>}
-    {target && <form className="mcp-connect-form panel" onSubmit={saveConnection}><div className="mcp-connect-heading"><div><span className="section-kicker">{target === 'custom' ? 'Custom server' : target.connected ? 'Manage connection' : 'New connection'}</span><h2>{target === 'custom' ? 'Add a custom MCP server.' : `Connect ${target.name}.`}</h2></div><button type="button" className="text-button" onClick={() => setTarget(null)}>Close</button></div>{target === 'custom' && <label>Connection name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Internal research" maxLength={100} required /></label>}<label>MCP server URL<input type="url" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://provider.example/mcp" required /></label><label>Bearer token <span className="field-note">Optional. Encrypted before storage; leave blank for a public server.</span><input type="password" value={accessToken} onChange={(event) => setAccessToken(event.target.value)} autoComplete="new-password" placeholder="Paste a provider token" /></label><div className="mcp-discover-row"><button type="button" className="button secondary" onClick={() => void discover()} disabled={!serverUrl || discovering}>{discovering ? 'Checking server…' : 'Find read-only tools'}</button><span>Kloppy only enables tools marked read-only by the MCP server.</span></div>{toolOptions.length > 0 && <fieldset className="mcp-tool-options"><legend>Choose tools to enable</legend>{toolOptions.map((tool) => <label key={tool}><input type="checkbox" checked={selectedTools.includes(tool)} onChange={(event) => setSelectedTools((current) => event.target.checked ? [...current, tool] : current.filter((name) => name !== tool))} /> <code>{tool}</code></label>)}</fieldset>}{target !== 'custom' && target.allowed_tools?.length && toolOptions.length === 0 && <p className="field-note">Saved tools: {target.allowed_tools.join(', ')}. Find tools again to change them.</p>}<div className="brand-source-actions"><button type="button" className="button secondary" onClick={() => setTarget(null)}>Cancel</button><button type="submit" className="button primary" disabled={saving || !toolOptions.length || !selectedTools.length || (target === 'custom' && !name.trim())}>{saving ? 'Verifying…' : 'Connect'} <Icon name="arrow" size={14} /></button></div></form>}
+    {target && <form className="mcp-connect-form panel" onSubmit={saveConnection}><div className="mcp-connect-heading"><div><span className="section-kicker">{target === 'custom' ? 'Custom service' : target.connected ? 'Manage connection' : 'New connection'}</span><h2>{target === 'custom' ? 'Add a custom service.' : `Connect ${target.name}.`}</h2></div><button type="button" className="text-button" onClick={() => setTarget(null)}>Close</button></div>{target === 'custom' && <label>Connection name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Internal research" maxLength={100} required /></label>}<label>Service URL<input type="url" value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} placeholder="https://service.example/connection" required /></label><label>Bearer token <span className="field-note">Optional. Encrypted before storage; leave blank for a public server.</span><input type="password" value={accessToken} onChange={(event) => setAccessToken(event.target.value)} autoComplete="new-password" placeholder="Paste a provider token" /></label><div className="mcp-discover-row"><button type="button" className="button secondary" onClick={() => void discover()} disabled={!serverUrl || discovering}>{discovering ? 'Checking server…' : 'Find available capabilities'}</button><span>Kloppy only enables capabilities that are safe to read.</span></div>{toolOptions.length > 0 && <fieldset className="mcp-tool-options"><legend>Choose capabilities to enable</legend>{toolOptions.map((tool) => <label key={tool}><input type="checkbox" checked={selectedTools.includes(tool)} onChange={(event) => setSelectedTools((current) => event.target.checked ? [...current, tool] : current.filter((name) => name !== tool))} /> {tool.replaceAll('_', ' ')}</label>)}</fieldset>}{target !== 'custom' && target.allowed_tools?.length && toolOptions.length === 0 && <p className="field-note">Saved capabilities: {target.allowed_tools.map((tool) => tool.replaceAll('_', ' ')).join(', ')}. Find capabilities again to change them.</p>}<div className="brand-source-actions"><button type="button" className="button secondary" onClick={() => setTarget(null)}>Cancel</button><button type="submit" className="button primary" disabled={saving || !toolOptions.length || !selectedTools.length || (target === 'custom' && !name.trim())}>{saving ? 'Verifying…' : 'Connect'} <Icon name="arrow" size={14} /></button></div></form>}
     <div className="connector-toolbar"><div className="filter-tabs">{(['All', 'Applications', 'Resources'] as const).map((option) => <button className={filter === option ? 'active' : ''} key={option} onClick={() => setFilter(option)}>{option}<span>{option === 'All' ? items.length : items.filter((item) => item.kind === option.slice(0, -1)).length}</span></button>)}</div></div>
-    {loading ? <div className="connector-empty">Loading connected services…</div> : <div className="connector-grid">{visible.length ? visible.map((item) => <article className="connector-card" key={item.id}><div className="connector-card-head"><div className={`connector-logo logo-${item.id}`}>{item.name.slice(0, 1).toUpperCase()}</div><span className={`connector-status ${item.connected ? 'connected' : ''}`}><span />{item.connected ? 'Connected' : 'Not connected'}</span></div><span className="integration-category">{item.kind} · {item.category}</span><h2>{item.name}</h2><p>{item.description}</p><div className="connector-card-foot"><span className="connector-scope">{item.connected ? `${item.allowed_tools?.length ?? 0} read-only tools enabled` : 'MCP endpoint required'}</span><div><button className="button secondary" onClick={() => openConnection(item)}>{item.connected ? 'Manage' : 'Connect'}</button>{item.connected && <button className="text-button disconnect-button" onClick={() => void disconnect(item)}>Disconnect</button>}</div></div></article>) : <div className="connector-empty">{searchQuery.trim() ? `No services match “${searchQuery}”.` : 'No tools are available.'}</div>}</div>}
+    {loading ? <div className="connector-empty">Loading connected services…</div> : <div className="connector-grid">{visible.length ? visible.map((item) => <article className="connector-card" key={item.id}><div className="connector-card-head"><div className={`connector-logo logo-${item.id}`}>{item.name.slice(0, 1).toUpperCase()}</div><span className={`connector-status ${item.connected ? 'connected' : ''}`}><span />{item.connected ? 'Connected' : 'Not connected'}</span></div><span className="integration-category">{item.kind} · {item.category}</span><h2>{item.name}</h2><p>{item.description}</p><div className="connector-card-foot"><span className="connector-scope">{item.connected ? `${item.allowed_tools?.length ?? 0} capabilities enabled` : 'Service address required'}</span><div><button className="button secondary" onClick={() => openConnection(item)}>{item.connected ? 'Manage' : 'Connect'}</button>{item.connected && <button className="text-button disconnect-button" onClick={() => void disconnect(item)}>Disconnect</button>}</div></div></article>) : <div className="connector-empty">{searchQuery.trim() ? `No services match “${searchQuery}”.` : 'No services are available.'}</div>}</div>}
   </>
 }
 
@@ -785,7 +638,7 @@ function Settings() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [retryCount, setRetryCount] = useState(0)
-  useEffect(() => { setLoading(true); setError(''); request<UserSettings>('/settings').then(setProfile).catch(() => setError('Settings could not be loaded. Check the API connection and Supabase user_settings setup, then try again.')).finally(() => setLoading(false)) }, [retryCount])
+  useEffect(() => { setLoading(true); setError(''); request<UserSettings>('/settings').then(setProfile).catch(() => setError('Saved settings could not be loaded. Check your connection and try again.')).finally(() => setLoading(false)) }, [retryCount])
   const save = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
@@ -799,7 +652,7 @@ function Settings() {
       setError(reason instanceof Error ? reason.message : 'Could not save settings.')
     }
   }
-  return <><div className="page-heading compact"><div><div className="heading-meta">Account settings</div><h1>Set the room<br />up for better work.</h1><p className="heading-copy">Control how Kloppy speaks, where your work lives, and which decisions need your approval.</p></div></div><form className={`settings-layout ${error ? 'settings-unavailable' : ''}`} onSubmit={save}>{error && <div className="settings-load-error" role="alert"><Icon name="activity" size={16} /><div><strong>Saved settings are unavailable.</strong><span>Check the API connection and Supabase user_settings setup, then retry.</span></div><button type="button" className="button secondary" onClick={() => setRetryCount((count) => count + 1)}>Try again</button></div>}<section className="settings-section"><div><span className="section-kicker">Account identity</span><h2>How your team sees this space</h2><p>These details help Kloppy keep campaign language grounded in your world.</p></div><div className="settings-fields"><label>Your name<input required minLength={2} maxLength={80} value={profile.name} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, name: event.target.value })} /></label><label>Organization name<input required minLength={2} maxLength={120} value={profile.workspace} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, workspace: event.target.value })} /></label></div></section><section className="settings-section"><div><span className="section-kicker">Working style</span><h2>Keep the signal visible</h2><p>Drafting can happen quickly; publishing and spend always need clear approval.</p></div><div className="settings-fields"><label>Draft approval preference<select value={profile.permission_policy} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, permission_policy: event.target.value as UserSettings['permission_policy'] })}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label><label className="toggle-row"><span><strong>Weekly campaign digest</strong><small>A short read on what changed and what deserves your attention.</small></span><input type="checkbox" checked={profile.digest_enabled} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, digest_enabled: event.target.checked })} /><span className="toggle" /></label></div></section><div className="settings-footer"><span className={`secure-note ${error ? 'settings-error' : ''}`} role={error ? 'status' : undefined}><Icon name={error ? 'activity' : 'lock'} size={13} /> {loading ? 'Loading saved settings…' : error ? 'Settings unavailable' : 'Changes are saved privately.'}</span>{error ? null : <button className="button primary" type="submit" disabled={loading || Boolean(error)}>{saved ? 'Saved' : 'Save changes'} <Icon name={saved ? 'check' : 'arrow'} size={15} /></button>}</div></form></>
+  return <><div className="page-heading compact"><div><div className="heading-meta">Account settings</div><h1>Set the room<br />up for better work.</h1><p className="heading-copy">Control how Kloppy speaks, where your work lives, and which decisions need your approval.</p></div></div><form className={`settings-layout ${error ? 'settings-unavailable' : ''}`} onSubmit={save}>{error && <div className="settings-load-error" role="alert"><Icon name="activity" size={16} /><div><strong>Saved settings are unavailable.</strong><span>Check your connection and try again.</span></div><button type="button" className="button secondary" onClick={() => setRetryCount((count) => count + 1)}>Try again</button></div>}<section className="settings-section"><div><span className="section-kicker">Account identity</span><h2>How your team sees this space</h2><p>These details help Kloppy keep campaign language grounded in your world.</p></div><div className="settings-fields"><label>Your name<input required minLength={2} maxLength={80} value={profile.name} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, name: event.target.value })} /></label><label>Organization name<input required minLength={2} maxLength={120} value={profile.workspace} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, workspace: event.target.value })} /></label></div></section><section className="settings-section"><div><span className="section-kicker">Working style</span><h2>Keep the signal visible</h2><p>Drafting can happen quickly; publishing and spend always need clear approval.</p></div><div className="settings-fields"><label>Draft approval preference<select value={profile.permission_policy} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, permission_policy: event.target.value as UserSettings['permission_policy'] })}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label><label className="toggle-row"><span><strong>Weekly campaign digest</strong><small>A short read on what changed and what deserves your attention.</small></span><input type="checkbox" checked={profile.digest_enabled} disabled={Boolean(error)} onChange={(event) => setProfile({ ...profile, digest_enabled: event.target.checked })} /><span className="toggle" /></label></div></section><div className="settings-footer"><span className={`secure-note ${error ? 'settings-error' : ''}`} role={error ? 'status' : undefined}><Icon name={error ? 'activity' : 'lock'} size={13} /> {loading ? 'Loading saved settings…' : error ? 'Settings unavailable' : 'Changes are saved privately.'}</span>{error ? null : <button className="button primary" type="submit" disabled={loading || Boolean(error)}>{saved ? 'Saved' : 'Save changes'} <Icon name={saved ? 'check' : 'arrow'} size={15} /></button>}</div></form></>
 }
 function CampaignTabs({ page, setPage }: { page: Page; setPage: (page: Page) => void }) {
   return <nav className="campaign-tabs" aria-label="Campaign sections">{campaignNav.map((item) => <button aria-label={item.label} className={page === item.page ? 'active' : ''} key={item.page} onClick={() => setPage(item.page)}>{item.page === 'campaign-chat' ? <KloppyMark /> : <Icon name={item.icon} size={15} />}<span>{item.page === 'launch' ? <><span className="tab-long-label">Launch &amp; learn</span><span className="tab-short-label">Launch</span></> : item.label}</span></button>)}</nav>
@@ -831,9 +684,35 @@ function App() {
   const pendingRoute = useRef<string | null>(appRoutes.has(initialRoute as Page) ? initialRoute : null)
   const [campaigns, setCampaigns] = useState<Campaign[]>(readCampaigns)
   const [selectedCampaignId, setSelectedCampaignId] = useState(() => localStorage.getItem(`kloppy-selected-campaign:${accountKey()}`) ?? '')
+  const [campaignSections, setCampaignSections] = useState<CampaignSections>(() => {
+    const id = localStorage.getItem(`kloppy-selected-campaign:${accountKey()}`)
+    return id ? readCampaignSections(id) : {}
+  })
   const selectedCampaign = campaigns.find((item) => item.id === selectedCampaignId)
-  const createCampaign = (name: string, conversation?: ChatMessage[]) => { const campaign = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }; const next = [campaign, ...campaigns]; setCampaigns(next); localStorage.setItem(`kloppy-campaigns:${accountKey()}`, JSON.stringify(next)); if (conversation) localStorage.setItem(`kloppy-chat:${accountKey()}:${campaign.id}`, JSON.stringify(conversation)); setSelectedCampaignId(campaign.id); localStorage.setItem(`kloppy-selected-campaign:${accountKey()}`, campaign.id); go('campaign-chat') }
+  const saveCampaignSections = (campaignId: string, sections: CampaignSections) => {
+    const merged = { ...readCampaignSections(campaignId), ...sections }
+    localStorage.setItem(campaignSectionsKey(campaignId), JSON.stringify(merged))
+    if (campaignId === selectedCampaignId) setCampaignSections(merged)
+  }
+  const createCampaign = (name: string, conversation?: ChatMessage[]) => {
+    const campaign = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }
+    const next = [campaign, ...campaigns]
+    setCampaigns(next)
+    localStorage.setItem(`kloppy-campaigns:${accountKey()}`, JSON.stringify(next))
+    if (conversation) {
+      localStorage.setItem(`kloppy-chat:${accountKey()}:${campaign.id}`, JSON.stringify(conversation))
+      const sections = [...conversation].reverse().find((message) => message.artifact?.sections)?.artifact?.sections
+      if (sections) localStorage.setItem(campaignSectionsKey(campaign.id), JSON.stringify(sections))
+    }
+    setSelectedCampaignId(campaign.id)
+    localStorage.setItem(`kloppy-selected-campaign:${accountKey()}`, campaign.id)
+    go('campaign-chat')
+  }
   const openCampaign = (campaign: Campaign) => { setSelectedCampaignId(campaign.id); localStorage.setItem(`kloppy-selected-campaign:${accountKey()}`, campaign.id); go('campaign-chat') }
+
+  useEffect(() => {
+    setCampaignSections(selectedCampaignId ? readCampaignSections(selectedCampaignId) : {})
+  }, [selectedCampaignId])
 
   useEffect(() => {
     let active = true
@@ -932,7 +811,7 @@ function App() {
   const pageTitle = page === 'chat' ? 'Kloppy' : page === 'knowledge' ? 'Knowledge' : ['campaign-chat', 'overview', 'audience', 'strategy', 'launch'].includes(page) ? campaignNav.find((item) => item.page === page)?.label ?? 'Campaign' : navItems.find((item) => item.page === page)?.label ?? page
   const hasStudio = ['campaign-chat', 'overview', 'audience', 'strategy', 'launch'].includes(page) && Boolean(selectedCampaign)
   const canSearch = page === 'campaigns' || page === 'integrations'
-  return <div className="app-shell"><Sidebar page={page} setPage={(next) => go(next)} user={user} onLogout={logout} /><main className="main-content"><div className="workspace-header"><header className="topbar"><div className="breadcrumb"><span>Kloppy</span><Icon name="chevron" size={14} /><strong>{pageTitle}</strong></div>{hasStudio && selectedCampaign && <button className="campaign-name-chip" onClick={() => go('campaigns')} title="Switch campaign">{selectedCampaign.name}<Icon name="chevron" size={13} /></button>}{canSearch && <div className="topbar-actions"><label className="search-control"><Icon name="search" size={17} /><input aria-label={`Search ${page}`} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={page === 'campaigns' ? 'Search campaigns' : 'Search connectors'} /><kbd>⌘ K</kbd></label></div>}</header>{hasStudio && <CampaignTabs page={page} setPage={(next) => go(next)} />}</div><div className={page === 'chat' || page === 'campaign-chat' ? 'chat-page-wrap' : 'page-wrap'}>{page === 'chat' ? <ChatPage onSpinOffCampaign={createCampaign} /> : page === 'campaign-chat' ? selectedCampaign ? <ChatPage key={selectedCampaign.id} campaignId={selectedCampaign.id} campaignName={selectedCampaign.name} onSpinOffCampaign={createCampaign} /> : <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} /> : null}{page === 'campaigns' && <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} />}{page === 'knowledge' && <Knowledge onNavigate={(next) => go(next)} />}{page === 'overview' && (selectedCampaign ? <Overview campaignName={selectedCampaign.name} onNavigate={askInCampaign} /> : <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} />)}{['audience', 'strategy', 'launch'].includes(page) && (selectedCampaign ? <StagePage page={page as 'audience' | 'strategy' | 'launch'} onAsk={askInCampaign} /> : <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} />)}{page === 'integrations' && <Integrations searchQuery={searchQuery} />}{page === 'settings' && <Settings />}</div></main></div>
+  return <div className="app-shell"><Sidebar page={page} setPage={(next) => go(next)} user={user} onLogout={logout} /><main className="main-content"><div className="workspace-header"><header className="topbar"><div className="breadcrumb"><span>Kloppy</span><Icon name="chevron" size={14} /><strong>{pageTitle}</strong></div>{hasStudio && selectedCampaign && <button className="campaign-name-chip" onClick={() => go('campaigns')} title="Switch campaign">{selectedCampaign.name}<Icon name="chevron" size={13} /></button>}{canSearch && <div className="topbar-actions"><label className="search-control"><Icon name="search" size={17} /><input aria-label={`Search ${page}`} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={page === 'campaigns' ? 'Search campaigns' : 'Search connectors'} /><kbd>⌘ K</kbd></label></div>}</header>{hasStudio && <CampaignTabs page={page} setPage={(next) => go(next)} />}</div><div className={page === 'chat' || page === 'campaign-chat' ? 'chat-page-wrap' : 'page-wrap'}>{page === 'chat' ? <ChatPage onSpinOffCampaign={createCampaign} /> : page === 'campaign-chat' ? selectedCampaign ? <ChatPage key={selectedCampaign.id} campaignId={selectedCampaign.id} campaignName={selectedCampaign.name} campaignSections={campaignSections} onSpinOffCampaign={createCampaign} onCampaignSections={saveCampaignSections} /> : <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} /> : null}{page === 'campaigns' && <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} />}{page === 'knowledge' && <Knowledge onNavigate={(next) => go(next)} />}{page === 'overview' && (selectedCampaign ? <Overview campaignName={selectedCampaign.name} sections={campaignSections} onNavigate={askInCampaign} /> : <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} />)}{['audience', 'strategy', 'launch'].includes(page) && (selectedCampaign ? <StagePage page={page as 'audience' | 'strategy' | 'launch'} sections={campaignSections} onAsk={askInCampaign} /> : <CampaignList campaigns={campaigns} onCreate={createCampaign} onOpen={openCampaign} />)}{page === 'integrations' && <Integrations searchQuery={searchQuery} />}{page === 'settings' && <Settings />}</div></main></div>
 }
 
 export default App

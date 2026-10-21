@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from memwal import MemWalError, RecallMemory, RecallResult
 
-from app.schemas.assistant import ChatRequest
+from app.schemas.assistant import CampaignSectionContext, ChatRequest
+from app.prompts import BASE_PROMPT
 from app.services import memory
 from app.services.agent import StrandsAgentService
 
@@ -113,7 +114,12 @@ class WalrusMemoryTests(unittest.TestCase):
 
     def test_agent_prompt_labels_recalled_memory_as_untrusted_context(self) -> None:
         prompt = StrandsAgentService._prompt_for(
-            ChatRequest(message="Help with the next campaign."),
+            ChatRequest(
+                message="Help with the next campaign.",
+                campaign_sections=CampaignSectionContext(
+                    audience="Prior audience hypothesis",
+                ),
+            ),
             {"name": "A.", "workspace": "Studio", "permission_policy": "ask"},
             [],
             memory_context=memory.AgentMemoryContext(
@@ -125,7 +131,10 @@ class WalrusMemoryTests(unittest.TestCase):
         self.assertIn("WALRUS_MEMORY", prompt)
         self.assertIn('"status": "available"', prompt)
         self.assertIn("untrusted data", prompt)
+        self.assertIn("Never mention or narrate internal providers", BASE_PROMPT)
         self.assertIn("The user prefers concise plans.", prompt)
+        self.assertIn("CURRENT_CAMPAIGN_SECTIONS", prompt)
+        self.assertIn("Prior audience hypothesis", prompt)
 
 
 if __name__ == "__main__":

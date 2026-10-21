@@ -34,6 +34,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MEMWAL_SERVER_URL", "MEMWAL_URL"),
     )
     qloo_api_key: str | None = None
+    tavily_api_key: str | None = None
     qloo_base_url: str = Field(
         default="https://api.qloo.com",
         validation_alias=AliasChoices("QLOO_API_URL", "QLOO_BASE_URL"),

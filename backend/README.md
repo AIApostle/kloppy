@@ -36,6 +36,19 @@ Kloppy can expose server-side Qloo cultural research and allowlisted tools from
 external MCP servers to the Strands agent. Set `QLOO_API_KEY` to enable Qloo.
 Qloo credentials stay on the backend; the browser never receives the key.
 
+## Agent web research and campaign documents
+
+Set `TAVILY_API_KEY` in the backend environment to enable Kloppy's web search
+tool. Search results include source titles, URLs, snippets, and publication
+dates when provided; Kloppy should cite only sources returned by the search.
+Without this key, web search is not exposed to the agent. Keep the key server
+side and out of frontend configuration.
+
+Substantial campaign deliverables are generated as `.docx` Word documents.
+Each includes Overview, Audience, Strategy, and Launch & Learn, and the
+campaign workspace saves the corresponding section content so each tab
+reflects the same campaign work.
+
 Configure shared remote HTTPS or local loopback Streamable HTTP MCP servers
 through `MCP_SERVERS_JSON`, or connect an individual user's MCP server from the
 Integrations page. Per-user connections are tested before saving, encrypted
@@ -88,10 +101,11 @@ endpoint and exact read-only tool names provided by each service:
 }
 ```
 
-The agent can create a Markdown document draft inside a conversation. The
-frontend renders that draft and lets the user download it. These drafts are
-conversation outputs; persistent document storage and external write actions
-need a configured provider and an explicit approval workflow.
+The agent creates `.docx` document drafts inside a conversation. The
+frontend renders a review preview and lets the user download the Word file.
+These drafts are conversation outputs; persistent document storage and
+external write actions need a configured provider and an explicit approval
+workflow.
 
 The chat WebSocket emits activity events for tool calls and work stages. It
 does not stream private model reasoning.
