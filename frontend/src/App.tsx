@@ -35,13 +35,13 @@ function apiCandidates() {
     candidates.push(`${window.location.protocol}//${hostForUrl}:8001/api`)
     if (hostname !== 'localhost') candidates.push('http://localhost:8001/api')
     if (hostname !== '127.0.0.1') candidates.push('http://127.0.0.1:8001/api')
-    if (!import.meta.env.DEV) candidates.push(HOSTED_API_URL)
   } else if (hostname.endsWith('.vercel.app')) {
     candidates.push(HOSTED_API_URL)
   } else {
-    candidates.push(`${window.location.origin}/api`, HOSTED_API_URL)
+    candidates.push(`${window.location.origin}/api`)
   }
 
+  candidates.push(HOSTED_API_URL)
   return [...new Set(candidates)]
 }
 
@@ -64,12 +64,9 @@ async function resolveApiBaseUrl(excludeUrl?: string) {
   if (apiBaseCache && apiBaseCache.expiresAt > Date.now() && apiBaseCache.url !== excludeUrl) return apiBaseCache.url
 
   apiBaseCache = null
-  const hostname = window.location.hostname
-  const localDevelopment = import.meta.env.DEV || hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
   for (const candidate of apiCandidates()) {
     if (candidate === excludeUrl) continue
-    const shouldProbe = !localDevelopment
-    if (!shouldProbe || await apiIsHealthy(candidate)) {
+    if (await apiIsHealthy(candidate)) {
       apiBaseCache = { url: candidate, expiresAt: Date.now() + API_CACHE_MS }
       return candidate
     }
@@ -388,6 +385,8 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
             ? 'Kloppy can’t access your saved workspace settings yet. Please try again in a moment.'
             : data.error_code === 'authentication_required'
               ? 'Your session has expired. Sign in again to continue.'
+              : data.error_code === 'invalid_request'
+                ? 'That message or conversation context is too long. Please shorten it and try again.'
               : lowerError.includes('not configured')
             ? 'Kloppy’s assistant is not available yet. Please try again in a moment.'
             : data.error ? 'I couldn’t complete that just now. Please try again in a moment.' : undefined

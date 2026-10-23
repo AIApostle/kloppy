@@ -3,6 +3,7 @@
 import asyncio
 
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 
 from ..schemas.assistant import ChatRequest, ChatResponse
 from ..services.agent import AgentConfigurationError, AgentProviderError, StrandsAgentService
@@ -53,7 +54,18 @@ async def chat_socket(websocket: WebSocket) -> None:
     await websocket.accept()
     try:
         while True:
-            payload = ChatRequest.model_validate(await websocket.receive_json())
+            raw_payload = await websocket.receive_json()
+            try:
+                payload = ChatRequest.model_validate(raw_payload)
+            except ValidationError:
+                await websocket.send_json(
+                    {
+                        "type": "response",
+                        "error": "The message or conversation context is too large or invalid. Please shorten it and try again.",
+                        "error_code": "invalid_request",
+                    }
+                )
+                continue
             try:
                 # A websocket can outlive a settings change in another tab.
                 # Re-read the saved policy before every agent turn.

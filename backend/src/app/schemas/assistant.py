@@ -2,12 +2,20 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class ConversationTurn(BaseModel):
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=2000)
+    content: str = Field(min_length=1, max_length=12000)
+
+    @field_validator("content")
+    @classmethod
+    def validate_content_length(cls, content: str, info: ValidationInfo) -> str:
+        max_length = 2000 if info.data.get("role") == "user" else 12000
+        if len(content) > max_length:
+            raise ValueError(f"Conversation {info.data.get('role')} content is too long.")
+        return content
 
 
 class CampaignSectionContext(BaseModel):
