@@ -16,6 +16,17 @@ to the hosted API if an endpoint is unavailable.
 The API allows the configured frontend origins from `FRONTEND_ORIGINS`; add
 the deployed frontend's origin there if it is not already listed.
 
+# API and provider logs
+
+The API writes structured request logs for HTTP routes and WebSocket chat
+connections, including status, elapsed time, and a generated request ID.
+External calls log provider, operation, outcome, upstream status when known,
+and duration. These logs intentionally omit request bodies, query strings,
+authorization headers, credentials, and provider response content. WebSocket
+authentication is sent in the first frame rather than the URL to keep bearer
+tokens out of access logs. Search logs will report Tavily as unavailable until
+`TAVILY_API_KEY` is configured in the backend environment.
+
 # Agent memory: Walrus Memory
 
 Kloppy can recall relevant conversation facts between sessions with the
@@ -25,9 +36,13 @@ official Walrus Memory Python SDK (`memwal`). Set `MEMWAL_PRIVATE_KEY` and
 an account and delegate key at [memory.walrus.xyz](https://memory.walrus.xyz).
 The delegate key must stay server-side.
 
-The API verifies the Supabase bearer token before deriving opaque, stable
-Walrus namespaces for the user workspace and each selected project (the
-campaign ID). Agent turns recall from the workspace and current project only,
+The API verifies the Supabase bearer token and derives opaque, stable Walrus
+namespaces from the verified user ID and scope. Each user's workspace has its
+own namespace; each selected project (campaign ID) has a separate namespace
+that also includes that user ID, preventing cross-user memory sharing. The SDK
+client is initialized with the user's workspace namespace and every recall,
+analysis, and remember call explicitly supplies its intended namespace. Agent
+turns recall from the workspace and current project only,
 then submit the user's message for fact extraction; assistant-generated text
 is not written to memory. The agent also has a project-scoped memory tool for
 explicitly retaining concise, durable user-provided project facts. Writes are
@@ -39,7 +54,9 @@ relayer over HTTPS.
 The integration uses `MemWalSync`, `RecallParams`, `recall()`, `analyze()`,
 and `remember()` from the Python SDK. See the
 [Python SDK project on PyPI](https://pypi.org/project/memwal/) and the
-[Walrus Memory documentation](https://memory.walrus.xyz).
+[Walrus Memory documentation](https://memory.walrus.xyz). The SDK documents
+namespace as a client setting and as an optional argument to individual memory
+operations; Kloppy uses both to keep each operation scoped explicitly.
 
 # Agent tools: Qloo and MCP
 
@@ -49,11 +66,15 @@ Qloo credentials stay on the backend; the browser never receives the key.
 
 ## Agent web research and campaign documents
 
-Set `TAVILY_API_KEY` in the backend environment to enable Kloppy's web search
-tool. Search results include source titles, URLs, snippets, and publication
-dates when provided; Kloppy should cite only sources returned by the search.
-Without this key, web search is not exposed to the agent. Keep the key server
-side and out of frontend configuration.
+Set `TAVILY_API_KEY` in the backend environment to enable Kloppy's built-in
+web-search tool. The tool is available to the agent on every turn, but prompt
+instructions restrict its use to requests needing current, specialized, or
+explicitly requested web research. Search results include source titles, URLs,
+snippets, and publication dates when provided; Kloppy cites only sources
+returned by the search. Without this key, the tool reports that search is
+unavailable. Keep the key server-side and out of frontend configuration. The
+integration follows the [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
+using its bearer-token authorization header.
 
 Substantial campaign deliverables are generated as `.docx` Word documents.
 Each includes Overview, Audience, Strategy, and Launch & Learn, and the

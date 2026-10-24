@@ -6,6 +6,7 @@ import httpx
 import logging
 
 from ..config import settings
+from ..observability import log_external_call
 from .user_settings import SettingsAuthenticationError, SettingsStoreError, _headers, _user_id
 
 logger = logging.getLogger(__name__)
@@ -14,19 +15,21 @@ logger = logging.getLogger(__name__)
 def list_sources(access_token: str) -> list[dict[str, Any]]:
     user_id = _user_id(access_token)
     try:
-        response = httpx.get(
-            f"{settings.supabase_url.rstrip('/')}/rest/v1/brand_sources",
-            headers=_headers(access_token),
-            params={
-                "user_id": f"eq.{user_id}",
-                "select": "id,title,content,source_type,file_name,created_at",
-                "order": "created_at.desc",
-                "limit": "100",
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        rows = response.json()
+        with log_external_call("supabase", "brand_sources.select") as call:
+            response = httpx.get(
+                f"{settings.supabase_url.rstrip('/')}/rest/v1/brand_sources",
+                headers=_headers(access_token),
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "select": "id,title,content,source_type,file_name,created_at",
+                    "order": "created_at.desc",
+                    "limit": "100",
+                },
+                timeout=15,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            rows = response.json()
         if not isinstance(rows, list):
             raise SettingsStoreError("Supabase returned an invalid knowledge response.")
         return rows
@@ -39,15 +42,17 @@ def list_sources(access_token: str) -> list[dict[str, Any]]:
 def create_source(access_token: str, source: dict[str, Any]) -> dict[str, Any]:
     user_id = _user_id(access_token)
     try:
-        response = httpx.post(
-            f"{settings.supabase_url.rstrip('/')}/rest/v1/brand_sources",
-            headers={**_headers(access_token), "Prefer": "return=representation"},
-            params={"select": "id,title,content,source_type,file_name,created_at"},
-            json={**source, "user_id": user_id},
-            timeout=20,
-        )
-        response.raise_for_status()
-        rows = response.json()
+        with log_external_call("supabase", "brand_sources.insert") as call:
+            response = httpx.post(
+                f"{settings.supabase_url.rstrip('/')}/rest/v1/brand_sources",
+                headers={**_headers(access_token), "Prefer": "return=representation"},
+                params={"select": "id,title,content,source_type,file_name,created_at"},
+                json={**source, "user_id": user_id},
+                timeout=20,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            rows = response.json()
         if not rows:
             raise SettingsStoreError("Supabase did not return the saved source.")
         return rows[0]
@@ -60,13 +65,15 @@ def create_source(access_token: str, source: dict[str, Any]) -> dict[str, Any]:
 def delete_source(access_token: str, source_id: str) -> None:
     user_id = _user_id(access_token)
     try:
-        response = httpx.delete(
-            f"{settings.supabase_url.rstrip('/')}/rest/v1/brand_sources",
-            headers=_headers(access_token),
-            params={"id": f"eq.{source_id}", "user_id": f"eq.{user_id}"},
-            timeout=15,
-        )
-        response.raise_for_status()
+        with log_external_call("supabase", "brand_sources.delete") as call:
+            response = httpx.delete(
+                f"{settings.supabase_url.rstrip('/')}/rest/v1/brand_sources",
+                headers=_headers(access_token),
+                params={"id": f"eq.{source_id}", "user_id": f"eq.{user_id}"},
+                timeout=15,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
     except httpx.HTTPStatusError as error:
         _raise_storage_error(error)
     except httpx.HTTPError as error:

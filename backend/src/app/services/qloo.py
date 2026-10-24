@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from ..config import settings
+from ..observability import log_external_call
 from ..schemas.qloo import QlooCapabilityRequest
 
 logger = logging.getLogger(__name__)
@@ -62,17 +63,19 @@ def _request(path: str, params: dict[str, str | int]) -> dict[str, Any]:
         raise QlooConfigurationError("Qloo is not configured on the backend.")
 
     try:
-        response = httpx.get(
-            f"{settings.qloo_base_url.rstrip('/')}/{path.lstrip('/')}",
-            params=params,
-            headers={
-                "X-Api-Key": settings.qloo_api_key,
-                "Accept": "application/json",
-            },
-            timeout=25,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        with log_external_call("qloo", path) as call:
+            response = httpx.get(
+                f"{settings.qloo_base_url.rstrip('/')}/{path.lstrip('/')}",
+                params=params,
+                headers={
+                    "X-Api-Key": settings.qloo_api_key,
+                    "Accept": "application/json",
+                },
+                timeout=25,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            payload = response.json()
     except httpx.HTTPStatusError as error:
         logger.warning("Qloo returned HTTP %s for %s", error.response.status_code, path)
         raise QlooProviderError("Qloo could not complete this request.") from error

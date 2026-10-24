@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from ..config import settings
+from ..observability import log_external_call
 from ..schemas.settings import ProfileUpdate, UserSettings
 
 
@@ -30,13 +31,15 @@ def _user_id(access_token: str) -> str:
     """Verify the bearer token with Supabase Auth; never trust a client user ID."""
     headers = _headers(access_token)
     try:
-        response = httpx.get(
-            f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
-            headers=headers,
-            timeout=10,
-        )
-        response.raise_for_status()
-        user_id = response.json().get("id")
+        with log_external_call("supabase", "auth.get_user") as call:
+            response = httpx.get(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/user",
+                headers=headers,
+                timeout=10,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            user_id = response.json().get("id")
     except httpx.HTTPStatusError as error:
         if error.response.status_code in {401, 403}:
             raise SettingsAuthenticationError("Authentication could not be verified.") from error
@@ -56,14 +59,16 @@ def _request_settings(access_token: str, method: str, body: dict[str, Any] | Non
     request_headers = {**headers, "Prefer": "resolution=merge-duplicates,return=representation"}
     try:
         if method == "GET":
-            response = httpx.get(
-                url,
-                headers=headers,
-                params={"user_id": f"eq.{user_id}", **{"select": params["select"]}},
-                timeout=10,
-            )
-            response.raise_for_status()
-            rows = response.json()
+            with log_external_call("supabase", "user_settings.select") as call:
+                response = httpx.get(
+                    url,
+                    headers=headers,
+                    params={"user_id": f"eq.{user_id}", **{"select": params["select"]}},
+                    timeout=10,
+                )
+                call.status_code = response.status_code
+                response.raise_for_status()
+                rows = response.json()
             if rows:
                 return UserSettings.model_validate(rows[0]).model_dump()
             # Persist conservative defaults on first access, so execution always
@@ -73,15 +78,17 @@ def _request_settings(access_token: str, method: str, body: dict[str, Any] | Non
                 "UPSERT",
                 {"user_id": user_id, **UserSettings().model_dump()},
             )
-        response = httpx.post(
-            url,
-            headers=request_headers,
-            params=params,
-            json={**(body or {}), "user_id": user_id},
-            timeout=10,
-        )
-        response.raise_for_status()
-        rows = response.json()
+        with log_external_call("supabase", "user_settings.upsert") as call:
+            response = httpx.post(
+                url,
+                headers=request_headers,
+                params=params,
+                json={**(body or {}), "user_id": user_id},
+                timeout=10,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            rows = response.json()
         if not rows:
             raise SettingsStoreError("Supabase did not return the saved settings.")
         return UserSettings.model_validate(rows[0]).model_dump()

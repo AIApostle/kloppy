@@ -16,6 +16,7 @@ from strands import ToolContext, tool
 from strands.tools.mcp import MCPClient
 
 from ..config import settings
+from ..observability import log_external_call
 from .mcp_connections import user_server_config
 from .memory import remember_project_fact
 from .qloo import (
@@ -185,22 +186,26 @@ def _run_web_search(query: str) -> dict[str, Any]:
     if not safe_query:
         return {"status": "error", "message": "Enter a search query."}
     if not settings.tavily_api_key:
+        logger.warning("Web search unavailable: TAVILY_API_KEY is not configured")
         return {"status": "unavailable", "message": "Web search is not configured."}
     try:
-        response = httpx.post(
-            "https://api.tavily.com/search",
-            json={
-                "api_key": settings.tavily_api_key,
-                "query": safe_query,
-                "search_depth": "basic",
-                "max_results": 6,
-                "include_answer": False,
-                "include_raw_content": False,
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        with log_external_call("tavily", "search") as call:
+            response = httpx.post(
+                "https://api.tavily.com/search",
+                headers={"Authorization": f"Bearer {settings.tavily_api_key}"},
+                json={
+                    "query": safe_query,
+                    "search_depth": "basic",
+                    "max_results": 6,
+                    "include_answer": False,
+                    "include_raw_content": False,
+                    "include_published_date": True,
+                },
+                timeout=15,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            payload = response.json()
     except (httpx.HTTPError, ValueError) as error:
         logger.warning("Web search request failed: %s", type(error).__name__)
         return {"status": "error", "message": "Web search is temporarily unavailable."}
@@ -226,7 +231,7 @@ def _run_web_search(query: str) -> dict[str, Any]:
 
 @tool
 def web_search(query: str) -> dict[str, Any]:
-    """Search the public web for current, source-backed information relevant to a marketing request."""
+    """Search the web only when current, external, or explicitly requested facts would improve the answer."""
     return _run_web_search(query)
 
 
@@ -282,7 +287,8 @@ def connected_mcp_clients(access_token: str | None = None) -> list[MCPClient]:
     if not config["mcpServers"]:
         return []
     try:
-        return MCPClient.load_servers(config, continue_on_error=True, prefix_with_server_name=True)
+        with log_external_call("mcp", "load_configured_servers"):
+            return MCPClient.load_servers(config, continue_on_error=True, prefix_with_server_name=True)
     except (ValueError, TypeError) as error:
         logger.error("MCP server configuration could not be loaded: %s", type(error).__name__)
         return []
@@ -297,22 +303,22 @@ def agent_tool_session(
     tools: list[Any] = [draft_document]
     if memory_enabled:
         tools.append(walrus_remember_project_fact)
-    if settings.tavily_api_key:
-        tools.append(web_search)
+    tools.append(web_search)
     if settings.qloo_api_key:
         tools.extend([qloo_search_entities, qloo_cultural_affinities, qloo_agent_grounding])
     clients = connected_mcp_clients(access_token)
     for client in clients:
         try:
-            stack.enter_context(client)
-            for server_tool in client.list_tools_sync():
-                annotations = getattr(server_tool.mcp_tool, "annotations", None)
-                if annotations and getattr(
-                    annotations,
-                    "read_only_hint",
-                    getattr(annotations, "readOnlyHint", False),
-                ):
-                    tools.append(server_tool)
+            with log_external_call("mcp", "discover_read_only_tools"):
+                stack.enter_context(client)
+                for server_tool in client.list_tools_sync():
+                    annotations = getattr(server_tool.mcp_tool, "annotations", None)
+                    if annotations and getattr(
+                        annotations,
+                        "read_only_hint",
+                        getattr(annotations, "readOnlyHint", False),
+                    ):
+                        tools.append(server_tool)
         except Exception as error:  # Keep healthy providers available when one MCP is offline.
             logger.warning("MCP connection unavailable: %s", type(error).__name__)
     return stack, tools

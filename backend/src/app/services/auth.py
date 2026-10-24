@@ -10,6 +10,7 @@ from supabase import Client, create_client
 from supabase_auth.errors import AuthApiError
 
 from ..config import settings
+from ..observability import log_external_call
 
 
 class AuthConfigurationError(RuntimeError):
@@ -54,22 +55,24 @@ class SupabaseAuthService:
 
     def signup(self, email: str, password: str, name: str | None) -> AuthSession:
         try:
-            response = self._client.auth.sign_up(
-                {
-                    "email": email,
-                    "password": password,
-                    "options": {"data": {"name": name}} if name else {},
-                }
-            )
+            with log_external_call("supabase", "auth.sign_up"):
+                response = self._client.auth.sign_up(
+                    {
+                        "email": email,
+                        "password": password,
+                        "options": {"data": {"name": name}} if name else {},
+                    }
+                )
         except AuthApiError as error:
             raise AuthProviderError("Unable to create the account.") from error
         return self._session_from_response(response, fallback_email=email, fallback_name=name)
 
     def login(self, email: str, password: str) -> AuthSession:
         try:
-            response = self._client.auth.sign_in_with_password(
-                {"email": email, "password": password}
-            )
+            with log_external_call("supabase", "auth.sign_in_with_password"):
+                response = self._client.auth.sign_in_with_password(
+                    {"email": email, "password": password}
+                )
         except AuthApiError as error:
             raise AuthProviderError("Invalid email or password.") from error
         session = self._session_from_response(response, fallback_email=email, fallback_name=None)

@@ -9,6 +9,7 @@ import httpx
 from memwal import MemWalError, MemWalSync, RecallParams
 
 from ..config import settings
+from ..observability import log_external_call
 from .user_settings import SettingsStoreError, _user_id
 
 logger = logging.getLogger(__name__)
@@ -36,12 +37,12 @@ def _namespace(user_id: str, campaign_id: str | None = None) -> str:
     return f"kloppy-{digest}"
 
 
-def _create_client() -> MemWalSync:
+def _create_client(namespace: str) -> MemWalSync:
     return MemWalSync.create(
         key=settings.memwal_private_key or "",
         account_id=settings.memwal_account_id or "",
         server_url=settings.memwal_server_url,
-        namespace="kloppy",
+        namespace=namespace,
     )
 
 
@@ -60,14 +61,15 @@ def remember_project_fact(namespace: str | None, fact: str) -> dict[str, str]:
 
     client: MemWalSync | None = None
     try:
-        client = _create_client()
-        accepted = client.remember(
-            normalized_fact,
-            namespace=namespace,
-            idempotency_key=hashlib.sha256(
-                f"{namespace}\0{normalized_fact}".encode()
-            ).hexdigest(),
-        )
+        client = _create_client(namespace)
+        with log_external_call("walrus", "memory.remember"):
+            accepted = client.remember(
+                normalized_fact,
+                namespace=namespace,
+                idempotency_key=hashlib.sha256(
+                    f"{namespace}\0{normalized_fact}".encode()
+                ).hexdigest(),
+            )
         if not accepted.job_id:
             logger.warning("Walrus did not accept a project memory job")
             return {"status": "unavailable"}
@@ -104,21 +106,22 @@ def capture_turn_memory(
         workspace_namespace = _namespace(user_id)
         if campaign_id:
             project_namespace = _namespace(user_id, campaign_id)
-        client = _create_client()
+        client = _create_client(workspace_namespace)
         scopes = [("workspace", workspace_namespace)]
         if project_namespace:
             scopes.append(("project", project_namespace))
 
         seen: set[str] = set()
         for scope, namespace in scopes:
-            recalled = client.recall(
-                RecallParams(
-                    query=user_message[:2000],
-                    limit=MAX_MEMORIES_PER_SCOPE,
-                    namespace=namespace,
-                    max_distance=0.8,
+            with log_external_call("walrus", "memory.recall"):
+                recalled = client.recall(
+                    RecallParams(
+                        query=user_message[:2000],
+                        limit=MAX_MEMORIES_PER_SCOPE,
+                        namespace=namespace,
+                        max_distance=0.8,
+                    )
                 )
-            )
             for result in recalled.results:
                 text = result.text.strip()[:MAX_MEMORY_TEXT_LENGTH]
                 if text and text not in seen:
@@ -126,10 +129,11 @@ def capture_turn_memory(
                     memories.append({"scope": scope, "text": text})
 
         if len(user_message.split()) >= 3:
-            accepted = client.analyze(
-                user_message[:2000],
-                namespace=project_namespace or workspace_namespace,
-            )
+            with log_external_call("walrus", "memory.analyze"):
+                accepted = client.analyze(
+                    user_message[:2000],
+                    namespace=project_namespace or workspace_namespace,
+                )
             logger.info("Walrus accepted %s memory fact jobs", len(accepted.job_ids))
     except (MemWalError, httpx.HTTPError, SettingsStoreError, TypeError, ValueError) as error:
         failed = True

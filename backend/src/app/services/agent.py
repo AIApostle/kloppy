@@ -11,6 +11,7 @@ from strands.models.openai import OpenAIModel
 
 from ..schemas.assistant import ChatRequest, ChatResponse
 from ..config import settings
+from ..observability import log_external_call
 from ..prompts import BASE_PROMPT
 from .agent_tools import agent_tool_session
 from .memory import AgentMemoryContext, capture_turn_memory
@@ -127,7 +128,8 @@ class StrandsAgentService:
                     invocation_state["walrus_project_namespace"] = (
                         memory_context.project_namespace
                     )
-                result = agent(prompt, invocation_state=invocation_state)
+                with log_external_call("openrouter", "agent.completion"):
+                    result = agent(prompt, invocation_state=invocation_state)
         except Exception as error:
             raise AgentProviderError("The agent could not complete this request.") from error
 

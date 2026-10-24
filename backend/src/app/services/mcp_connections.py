@@ -12,6 +12,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from strands.tools.mcp import MCPClient
 
 from ..config import settings
+from ..observability import log_external_call
 from .user_settings import SettingsAuthenticationError, SettingsStoreError, _headers, _user_id
 
 logger = logging.getLogger(__name__)
@@ -25,18 +26,20 @@ class MCPConnectionError(ValueError):
 def list_connections(access_token: str) -> list[dict[str, Any]]:
     user_id = _user_id(access_token)
     try:
-        response = httpx.get(
-            f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
-            headers=_headers(access_token),
-            params={
-                "user_id": f"eq.{user_id}",
-                "select": "provider,display_name,server_url,allowed_tools,created_at,updated_at",
-                "order": "display_name.asc",
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        return response.json()
+        with log_external_call("supabase", "mcp_connections.select") as call:
+            response = httpx.get(
+                f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
+                headers=_headers(access_token),
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "select": "provider,display_name,server_url,allowed_tools,created_at,updated_at",
+                    "order": "display_name.asc",
+                },
+                timeout=15,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            return response.json()
     except httpx.HTTPStatusError as error:
         _raise_store_error(error)
     except httpx.HTTPError as error:
@@ -67,18 +70,20 @@ def save_connection(
         "allowed_tools": clean_tools,
     }
     try:
-        response = httpx.post(
-            f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
-            headers={**_headers(access_token), "Prefer": "resolution=merge-duplicates,return=representation"},
-            params={
-                "on_conflict": "user_id,provider",
-                "select": "provider,display_name,server_url,allowed_tools,created_at,updated_at",
-            },
-            json=payload,
-            timeout=20,
-        )
-        response.raise_for_status()
-        rows = response.json()
+        with log_external_call("supabase", "mcp_connections.upsert") as call:
+            response = httpx.post(
+                f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
+                headers={**_headers(access_token), "Prefer": "resolution=merge-duplicates,return=representation"},
+                params={
+                    "on_conflict": "user_id,provider",
+                    "select": "provider,display_name,server_url,allowed_tools,created_at,updated_at",
+                },
+                json=payload,
+                timeout=20,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            rows = response.json()
         if not rows:
             raise SettingsStoreError("Supabase did not return the saved MCP connection.")
         return {**rows[0], "verified_tools": tested_tools}
@@ -95,9 +100,10 @@ def discover_read_only_tools(server_url: str, bearer_token: str | None) -> list[
     if bearer_token:
         config["headers"] = {"Authorization": f"Bearer {bearer_token}"}
     try:
-        client = MCPClient.load_servers({"mcpServers": {"kloppy_probe": config}})[0]
-        with client:
-            tools = client.list_tools_sync()
+        with log_external_call("mcp", "discover_tools"):
+            client = MCPClient.load_servers({"mcpServers": {"kloppy_probe": config}})[0]
+            with client:
+                tools = client.list_tools_sync()
     except Exception as error:
         logger.warning("MCP discovery failed: %s", type(error).__name__)
         raise MCPConnectionError("Kloppy could not reach this MCP server. Check its URL and authentication.") from error
@@ -113,13 +119,15 @@ def discover_read_only_tools(server_url: str, bearer_token: str | None) -> list[
 def delete_connection(access_token: str, provider: str) -> None:
     user_id = _user_id(access_token)
     try:
-        response = httpx.delete(
-            f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
-            headers=_headers(access_token),
-            params={"provider": f"eq.{_slug(provider)}", "user_id": f"eq.{user_id}"},
-            timeout=15,
-        )
-        response.raise_for_status()
+        with log_external_call("supabase", "mcp_connections.delete") as call:
+            response = httpx.delete(
+                f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
+                headers=_headers(access_token),
+                params={"provider": f"eq.{_slug(provider)}", "user_id": f"eq.{user_id}"},
+                timeout=15,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
     except httpx.HTTPStatusError as error:
         _raise_store_error(error)
     except httpx.HTTPError as error:
@@ -132,17 +140,19 @@ def user_server_config(access_token: str) -> dict[str, Any]:
         return {"mcpServers": {}}
     user_id = _user_id(access_token)
     try:
-        response = httpx.get(
-            f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
-            headers=_headers(access_token),
-            params={
-                "user_id": f"eq.{user_id}",
-                "select": "provider,server_url,encrypted_token,allowed_tools",
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        rows = response.json()
+        with log_external_call("supabase", "mcp_connections.select_agent_config") as call:
+            response = httpx.get(
+                f"{settings.supabase_url.rstrip('/')}{TABLE_URL}",
+                headers=_headers(access_token),
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "select": "provider,server_url,encrypted_token,allowed_tools",
+                },
+                timeout=15,
+            )
+            call.status_code = response.status_code
+            response.raise_for_status()
+            rows = response.json()
     except httpx.HTTPStatusError as error:
         # An unapplied optional connector migration must not take down chat.
         if error.response.status_code == 404:
@@ -181,13 +191,14 @@ def _test_connection(provider: str, url: str, token: str | None, allowed_tools: 
     if token:
         server["headers"] = {"Authorization": f"Bearer {token}"}
     try:
-        client = MCPClient.load_servers(
-            {"mcpServers": {provider: server}},
-            continue_on_error=False,
-            prefix_with_server_name=True,
-        )[0]
-        with client:
-            available = client.list_tools_sync()
+        with log_external_call("mcp", "verify_connection"):
+            client = MCPClient.load_servers(
+                {"mcpServers": {provider: server}},
+                continue_on_error=False,
+                prefix_with_server_name=True,
+            )[0]
+            with client:
+                available = client.list_tools_sync()
     except Exception as error:
         logger.warning("MCP endpoint verification failed: %s", type(error).__name__)
         raise MCPConnectionError("Kloppy could not reach this MCP server with the supplied connection details.") from error

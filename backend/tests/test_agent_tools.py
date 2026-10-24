@@ -87,7 +87,9 @@ class AgentToolTests(unittest.TestCase):
         self.assertEqual(result["query"], "current campaign trends")
         self.assertEqual(result["sources"][0]["url"], "https://example.com/report")
         self.assertEqual(result["sources"][0]["snippet"], "Evidence from a published report.")
-        self.assertEqual(post.call_args.kwargs["json"]["api_key"], "test-key")
+        self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer test-key")
+        self.assertNotIn("api_key", post.call_args.kwargs["json"])
+        self.assertTrue(post.call_args.kwargs["json"]["include_published_date"])
 
     def test_web_search_is_explicitly_unavailable_without_configuration(self) -> None:
         with patch.object(agent_tools.settings, "tavily_api_key", None):
@@ -97,7 +99,7 @@ class AgentToolTests(unittest.TestCase):
         self.assertIn("not configured", result["message"])
         self.assertEqual(result["sources"] if "sources" in result else [], [])
 
-    def test_web_search_tool_is_only_exposed_when_configured(self) -> None:
+    def test_web_search_tool_is_always_exposed(self) -> None:
         with (
             patch.object(agent_tools.settings, "tavily_api_key", None),
             patch.object(agent_tools.settings, "qloo_api_key", None),
@@ -106,17 +108,11 @@ class AgentToolTests(unittest.TestCase):
             stack, tools = agent_tools.agent_tool_session()
             stack.close()
 
-        self.assertNotIn(agent_tools.web_search, tools)
-
-        with (
-            patch.object(agent_tools.settings, "tavily_api_key", "test-key"),
-            patch.object(agent_tools.settings, "qloo_api_key", None),
-            patch.object(agent_tools, "connected_mcp_clients", return_value=[]),
-        ):
-            stack, tools = agent_tools.agent_tool_session()
-            stack.close()
-
         self.assertIn(agent_tools.web_search, tools)
+        self.assertIn(
+            "only when current, external, or explicitly requested facts",
+            agent_tools.web_search.__doc__,
+        )
 
     def test_project_memory_tool_is_only_exposed_for_a_selected_project(self) -> None:
         with patch.object(agent_tools, "connected_mcp_clients", return_value=[]):

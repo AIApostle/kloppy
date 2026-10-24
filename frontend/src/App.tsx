@@ -66,7 +66,7 @@ async function resolveApiBaseUrl(excludeUrl?: string) {
   apiBaseCache = null
   for (const candidate of apiCandidates()) {
     if (candidate === excludeUrl) continue
-    if (await apiIsHealthy(candidate)) {
+    if (candidate === HOSTED_API_URL || await apiIsHealthy(candidate)) {
       apiBaseCache = { url: candidate, expiresAt: Date.now() + API_CACHE_MS }
       return candidate
     }
@@ -372,7 +372,7 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
       .then((apiBaseUrl) => {
         if (!active) return
         const websocketBase = apiBaseUrl.replace(/^http/, 'ws').replace(/\/$/, '')
-        const nextConnection = new WebSocket(`${websocketBase}/assistant/ws?access_token=${encodeURIComponent(token)}`)
+        const nextConnection = new WebSocket(`${websocketBase}/assistant/ws`)
         connection = nextConnection
         nextConnection.onmessage = (event) => {
           const data = JSON.parse(event.data) as { type?: string; reply?: string; error?: string; error_code?: string; artifact?: DocumentArtifact; activities?: AgentActivity[]; label?: string; status?: string; tool?: string }
@@ -398,7 +398,10 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
           setActivities([])
           setBusy(false)
         }
-        nextConnection.onopen = () => setSocket(nextConnection)
+        nextConnection.onopen = () => {
+          nextConnection.send(JSON.stringify({ type: 'auth', access_token: token }))
+          setSocket(nextConnection)
+        }
         nextConnection.onclose = () => {
           if (apiBaseCache?.url === apiBaseUrl) apiBaseCache = null
           setSocket(null)

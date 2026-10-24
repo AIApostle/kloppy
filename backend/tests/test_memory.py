@@ -70,7 +70,7 @@ class WalrusMemoryTests(unittest.TestCase):
             patch.object(memory.settings, "memwal_private_key", "private-key"),
             patch.object(memory.settings, "memwal_account_id", "account-id"),
             patch.object(memory, "_user_id", return_value="verified-user-id"),
-            patch.object(memory.MemWalSync, "create", return_value=client),
+            patch.object(memory.MemWalSync, "create", return_value=client) as create_client,
         ):
             context = memory.capture_turn_memory(
                 "verified-token",
@@ -91,6 +91,11 @@ class WalrusMemoryTests(unittest.TestCase):
             ),
         )
         self.assertEqual(client.recall.call_count, 2)
+        create_client.assert_called_once()
+        self.assertEqual(
+            create_client.call_args.kwargs["namespace"],
+            memory._namespace("verified-user-id"),
+        )
         self.assertEqual(
             client.analyze.call_args.kwargs["namespace"],
             memory._namespace("verified-user-id", "campaign-1"),
@@ -105,7 +110,7 @@ class WalrusMemoryTests(unittest.TestCase):
             patch.object(memory.settings, "memwal_private_key", "private-key"),
             patch.object(memory.settings, "memwal_account_id", "account-id"),
             patch.object(memory, "_user_id", return_value="verified-user-id"),
-            patch.object(memory.MemWalSync, "create", return_value=client),
+            patch.object(memory.MemWalSync, "create", return_value=client) as create_client,
         ):
             context = memory.capture_turn_memory(
                 "verified-token",
@@ -145,7 +150,7 @@ class WalrusMemoryTests(unittest.TestCase):
         with (
             patch.object(memory.settings, "memwal_private_key", "private-key"),
             patch.object(memory.settings, "memwal_account_id", "account-id"),
-            patch.object(memory.MemWalSync, "create", return_value=client),
+            patch.object(memory.MemWalSync, "create", return_value=client) as create_client,
         ):
             result = memory.remember_project_fact(
                 namespace,
@@ -160,6 +165,12 @@ class WalrusMemoryTests(unittest.TestCase):
         )
         self.assertEqual(client.remember.call_args.kwargs["namespace"], namespace)
         self.assertTrue(client.remember.call_args.kwargs["idempotency_key"])
+        create_client.assert_called_once_with(
+            key="private-key",
+            account_id="account-id",
+            server_url=memory.settings.memwal_server_url,
+            namespace=namespace,
+        )
         client.close.assert_called_once()
 
     def test_project_fact_is_not_queued_without_a_project_namespace(self) -> None:

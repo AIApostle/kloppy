@@ -52,5 +52,8 @@ klood or clood
 use security first approach
 add don't rely on your training data always do proper research and be grounded
 
+
+connect canva to the mcp and add proper comments, when coding from now henceforth andin the error 
+logging add proper english meaning, so a human can know what exactly is wrong and where it went wrong
 """
 
