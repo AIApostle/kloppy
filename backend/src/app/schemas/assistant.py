@@ -39,4 +39,5 @@ class ChatResponse(BaseModel):
     reply: str
     next_actions: list[str]
     artifact: dict[str, Any] | None = None
+    visual_results: list[dict[str, str]] = Field(default_factory=list)
     activities: list[dict[str, str]] = Field(default_factory=list)

@@ -293,9 +293,39 @@ type PermissionPolicy = 'ask' | 'auto'
 type AgentActivity = { label: string; status: string; tool?: string }
 type CampaignSections = Partial<Record<'overview' | 'audience' | 'strategy' | 'launch', string>>
 type DocumentArtifact = { title: string; content: string; format?: string; filename?: string; docx_base64?: string; sections?: CampaignSections }
-type ChatMessage = { role: 'agent' | 'user'; text: string; artifact?: DocumentArtifact; activities?: AgentActivity[] }
+type VisualResult = { url: string; description: string; source_title: string; source_url: string }
+type ChatMessage = { role: 'agent' | 'user'; text: string; artifact?: DocumentArtifact; visualResults?: VisualResult[]; activities?: AgentActivity[] }
 type AgentQuestion = { question_id: string; question: string; question_type: 'clarification' | 'permission'; options: string[] }
 type Campaign = { id: string; name: string; createdAt: string }
+
+function safeImageUrl(value: string | undefined) {
+  if (!value) return undefined
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password
+      ? url.href
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function WebImageCard({ image }: { image: VisualResult }) {
+  const [failed, setFailed] = useState(false)
+  const imageUrl = safeImageUrl(image.url)
+  const sourceUrl = safeImageUrl(image.source_url) ?? imageUrl
+  if (!imageUrl || !sourceUrl) return null
+
+  return <a className="chat-image-result" href={sourceUrl} target="_blank" rel="noreferrer noopener" aria-label={`Open image source: ${image.source_title}`}>
+    {failed
+      ? <span className="chat-image-unavailable">Image preview unavailable</span>
+      : <img src={imageUrl} alt={image.description || image.source_title} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />}
+    <span className="chat-image-caption">
+      <span>{image.description || image.source_title}</span>
+      <span className="chat-image-source"><Icon name="external" size={11} /> {image.source_title || 'Open image source'}</span>
+    </span>
+  </a>
+}
 
 function AgentQuestionDialog({
   question,
@@ -449,7 +479,7 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
         connection = nextConnection
         socketRef.current = nextConnection
         nextConnection.onmessage = (event) => {
-          const data = JSON.parse(event.data) as { type?: string; reply?: string; error?: string; error_code?: string; artifact?: DocumentArtifact; activities?: AgentActivity[]; label?: string; status?: string; tool?: string; question_id?: string; question?: string; question_type?: AgentQuestion['question_type']; options?: string[] }
+          const data = JSON.parse(event.data) as { type?: string; reply?: string; error?: string; error_code?: string; artifact?: DocumentArtifact; visual_results?: VisualResult[]; activities?: AgentActivity[]; label?: string; status?: string; tool?: string; question_id?: string; question?: string; question_type?: AgentQuestion['question_type']; options?: string[] }
           if (data.type === 'question' && data.question_id && data.question && data.question_type) {
             setQuestion({
               question_id: data.question_id,
@@ -481,7 +511,7 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
               : lowerError.includes('not configured')
             ? 'Kloppy’s assistant is not available yet. Please try again in a moment.'
             : data.error ? 'I couldn’t complete that just now. Please try again in a moment.' : undefined
-          setMessages((items) => [...items, { role: 'agent', text: data.reply ?? errorMessage ?? 'The agent returned no response.', artifact: data.artifact, activities: data.activities }])
+          setMessages((items) => [...items, { role: 'agent', text: data.reply ?? errorMessage ?? 'The agent returned no response.', artifact: data.artifact, visualResults: data.visual_results, activities: data.activities }])
           if (data.artifact) {
             setViewer(data.artifact)
             if (campaignId && data.artifact.sections) onCampaignSections?.(campaignId, data.artifact.sections)
@@ -623,7 +653,7 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
   return <aside className={`assistant-panel ${fullPage ? 'full-page-chat' : ''}`}>
     <div className="assistant-head"><div><h2>What should we make true?</h2><span className="assistant-runtime"><span className="live-dot" /> {socket ? 'Connected' : 'Ready for a message'}</span></div><button className="more-button" aria-label="Assistant options"><Icon name="dots" /></button></div>
     {messages.length === 0 && fullPage && <section className="chat-empty-state" aria-labelledby="chat-empty-title"><span className="chat-empty-mark"><KloppyMark /></span><h1 id="chat-empty-title">{campaignId ? `What would you like to make true for ${campaignName}?` : 'What are you launching?'}</h1><p>{campaignId ? 'Share the outcome you want from this campaign. Kloppy will keep the conversation, research, and drafts in this campaign’s workspace.' : 'Tell Kloppy about the product, the people you want to reach, or the result you want to create. We’ll shape the next move together.'}</p><div className="chat-starters" aria-label="Suggested starting points">{(campaignId ? ['Shape the campaign brief', 'Find the right audience', 'Draft launch messaging'] : ['We’re launching a new product', 'Help me find the right audience', 'Shape a campaign from my brief']).map((prompt) => <button type="button" key={prompt} onClick={() => { setInput(prompt); inputRef.current?.focus() }}>{prompt}<Icon name="arrow" size={14} /></button>)}</div></section>}
-    <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div className="chat-message-content">{message.role === 'agent' ? <FormattedText text={message.text} /> : <p>{message.text}</p>}{message.activities && <ActivityFeed events={message.activities} />}{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}<div className="chat-message-tools">{message.role === 'agent' ? <button type="button" onClick={() => void copyReply(index, message.text)} aria-label={copiedIndex === index ? 'Copied response' : 'Copy response'}><Icon name="copy" size={13} /> {copiedIndex === index ? 'Copied' : 'Copy'}</button> : <button type="button" disabled={busy} onClick={() => editMessage(index, message.text)} aria-label="Edit message"><Icon name="edit" size={13} /> Edit</button>}</div>{copyError && message.role === 'agent' && <p className="chat-copy-error" role="status">{copyError}</p>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><div><ActivityFeed events={activities} live /><p className="working-copy">{question ? 'Waiting for your answer…' : stopping ? 'Stopping your response…' : 'Kloppy is preparing your response.'}</p></div></div>}</div>
+    <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div className="chat-message-content">{message.role === 'agent' ? <FormattedText text={message.text} /> : <p>{message.text}</p>}{message.visualResults && message.visualResults.length > 0 && <section className="chat-image-gallery" aria-label="Web image examples"><div className="chat-image-grid">{message.visualResults.map((image) => <WebImageCard key={image.url} image={image} />)}</div><p className="chat-image-disclaimer">Web examples; visit each source to review context and usage rights.</p></section>}{message.activities && <ActivityFeed events={message.activities} />}{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}<div className="chat-message-tools">{message.role === 'agent' ? <button type="button" onClick={() => void copyReply(index, message.text)} aria-label={copiedIndex === index ? 'Copied response' : 'Copy response'}><Icon name="copy" size={13} /> {copiedIndex === index ? 'Copied' : 'Copy'}</button> : <button type="button" disabled={busy} onClick={() => editMessage(index, message.text)} aria-label="Edit message"><Icon name="edit" size={13} /> Edit</button>}</div>{copyError && message.role === 'agent' && <p className="chat-copy-error" role="status">{copyError}</p>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><div><ActivityFeed events={activities} live /><p className="working-copy">{question ? 'Waiting for your answer…' : stopping ? 'Stopping your response…' : 'Kloppy is preparing your response.'}</p></div></div>}</div>
     {!campaignId && userHasSpoken && <div className="conversation-actions"><button type="button" className="text-button" onClick={startSpinOff}><Icon name="plus" size={14} /> Spin off as a campaign</button>{spinOffOpen && <form onSubmit={(event) => { event.preventDefault(); if (spinOffName.trim()) onSpinOffCampaign?.(spinOffName.trim(), messages) }}><input aria-label="New campaign name" autoFocus value={spinOffName} onChange={(event) => setSpinOffName(event.target.value)} placeholder="Name this campaign" maxLength={200} required /><button className="button primary" type="submit"><Icon name="arrow" size={14} /> Create campaign</button><button type="button" className="text-button" onClick={() => setSpinOffOpen(false)}>Cancel</button></form>}</div>}
     {(files.length > 0 || contextItems.length > 0) && <div className="composer-context">{[...files, ...contextItems].map((item) => <span key={item}><Icon name={files.includes(item) ? 'file' : 'book'} size={12} /> {item}<button onClick={() => files.includes(item) ? setFiles((items) => items.filter((entry) => entry !== item)) : setContextItems((items) => items.filter((entry) => entry !== item))} aria-label={`Remove ${item}`}>×</button></span>)}</div>}
     {menuOpen && <div className="composer-menu"><label className="menu-action"><Icon name="file" size={15} /> Add files<input type="file" multiple onChange={addFile} /></label><button className={contextItems.includes('Brand knowledge') ? 'selected' : ''} onClick={() => addContext('Brand knowledge')}><Icon name="book" size={15} /> Brand knowledge</button><button className={contextItems.includes('Campaign skills') ? 'selected' : ''} onClick={() => addContext('Campaign skills')}><Icon name="spark" size={15} /> Campaign skills</button></div>}

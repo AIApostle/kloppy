@@ -6,14 +6,24 @@ import re
 from base64 import b64encode
 from contextlib import ExitStack
 from io import BytesIO
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
-import httpx
+import requests
 from docx import Document
 from docx.document import Document as DocxDocument
 from strands import ToolContext, tool
 from strands.tools.mcp import MCPClient
+from tavily import TavilyClient
+from tavily.errors import (
+    BadRequestError,
+    ForbiddenError,
+    InvalidAPIKeyError,
+    MissingAPIKeyError,
+    TavilyKeylessLimitError,
+    TimeoutError as TavilyTimeoutError,
+    UsageLimitExceededError,
+)
 
 from ..config import settings
 from ..observability import log_external_call
@@ -181,6 +191,47 @@ def draft_document(
     return {"status": "drafted", "title": artifact["title"], "format": "Word document"}
 
 
+def _tavily_search(query: str, operation: str, **options: Any) -> dict[str, Any] | None:
+    try:
+        with log_external_call("tavily", operation):
+            response = TavilyClient(api_key=settings.tavily_api_key).search(
+                query,
+                timeout=15,
+                **options,
+            )
+    except (
+        BadRequestError,
+        ForbiddenError,
+        InvalidAPIKeyError,
+        MissingAPIKeyError,
+        TavilyKeylessLimitError,
+        TavilyTimeoutError,
+        UsageLimitExceededError,
+        requests.RequestException,
+        ValueError,
+    ) as error:
+        logger.warning("Tavily %s request failed: %s", operation, type(error).__name__)
+        return None
+    if not isinstance(response, dict):
+        logger.warning("Tavily %s returned an invalid response shape", operation)
+        return None
+    return response
+
+
+def _safe_web_url(value: Any) -> str | None:
+    if not isinstance(value, str) or len(value) > 2000:
+        return None
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        return None
+    return value
+
+
 def _run_web_search(query: str) -> dict[str, Any]:
     safe_query = " ".join(query.split())[:500]
     if not safe_query:
@@ -188,43 +239,31 @@ def _run_web_search(query: str) -> dict[str, Any]:
     if not settings.tavily_api_key:
         logger.warning("Web search unavailable: TAVILY_API_KEY is not configured")
         return {"status": "unavailable", "message": "Web search is not configured."}
-    try:
-        with log_external_call("tavily", "search") as call:
-            response = httpx.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {settings.tavily_api_key}"},
-                json={
-                    "query": safe_query,
-                    "search_depth": "basic",
-                    "max_results": 6,
-                    "include_answer": False,
-                    "include_raw_content": False,
-                    "include_published_date": True,
-                },
-                timeout=15,
-            )
-            call.status_code = response.status_code
-            response.raise_for_status()
-            payload = response.json()
-    except (httpx.HTTPError, ValueError) as error:
-        logger.warning("Web search request failed: %s", type(error).__name__)
+
+    payload = _tavily_search(
+        safe_query,
+        "search",
+        search_depth="basic",
+        max_results=6,
+        include_answer=False,
+        include_raw_content=False,
+        include_published_date=True,
+    )
+    if payload is None:
         return {"status": "error", "message": "Web search is temporarily unavailable."}
-    if not isinstance(payload, dict):
-        logger.warning("Web search returned an invalid response shape")
-        return {"status": "error", "message": "Web search returned an invalid response."}
     results = payload.get("results", [])
     if not isinstance(results, list):
-        logger.warning("Web search returned an invalid results shape")
+        logger.warning("Tavily search returned an invalid results shape")
         return {"status": "error", "message": "Web search returned an invalid response."}
     sources = [
         {
             "title": str(item.get("title") or "Untitled source")[:300],
-            "url": str(item.get("url") or "")[:2000],
+            "url": _safe_web_url(item.get("url")) or "",
             "snippet": str(item.get("content") or "")[:2500],
             "published_date": str(item.get("published_date") or "")[:80],
         }
         for item in results[:6]
-        if isinstance(item, dict) and isinstance(item.get("url"), str)
+        if isinstance(item, dict) and _safe_web_url(item.get("url"))
     ]
     return {"status": "ok", "query": safe_query, "sources": sources}
 
@@ -235,6 +274,89 @@ def web_search(query: str) -> dict[str, Any]:
     return _run_web_search(query)
 
 
+def _run_web_image_search(query: str) -> dict[str, Any]:
+    safe_query = " ".join(query.split())[:500]
+    if not safe_query:
+        return {"status": "error", "message": "Enter an image search query."}
+    if not settings.tavily_api_key:
+        logger.warning("Image search unavailable: TAVILY_API_KEY is not configured")
+        return {"status": "unavailable", "message": "Web image search is not configured."}
+
+    payload = _tavily_search(
+        safe_query,
+        "image_search",
+        search_depth="basic",
+        max_results=6,
+        include_answer=False,
+        include_raw_content=False,
+        include_images=True,
+        include_image_descriptions=True,
+        safe_search=True,
+    )
+    if payload is None:
+        return {"status": "error", "message": "Web image search is temporarily unavailable."}
+
+    source_by_image: dict[str, tuple[str, str]] = {}
+    results = payload.get("results", [])
+    if isinstance(results, list):
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            source_url = _safe_web_url(result.get("url"))
+            source_title = str(result.get("title") or "Web image source")[:300]
+            result_images = result.get("images", [])
+            if not isinstance(result_images, list):
+                continue
+            for image in result_images:
+                image_url = _safe_web_url(
+                    image.get("url") if isinstance(image, dict) else image
+                )
+                if image_url and source_url:
+                    source_by_image[image_url] = (source_title, source_url)
+
+    images: list[dict[str, str]] = []
+    seen: set[str] = set()
+    image_results = payload.get("images", [])
+    if isinstance(image_results, list):
+        for image in image_results:
+            image_url = _safe_web_url(
+                image.get("url") if isinstance(image, dict) else image
+            )
+            if not image_url or image_url in seen:
+                continue
+            seen.add(image_url)
+            source_title, source_url = source_by_image.get(
+                image_url,
+                ("Open original image", image_url),
+            )
+            description = (
+                image.get("description", "")
+                if isinstance(image, dict) and isinstance(image.get("description"), str)
+                else ""
+            )
+            images.append(
+                {
+                    "url": image_url,
+                    "description": description[:500] or safe_query,
+                    "source_title": source_title,
+                    "source_url": source_url,
+                }
+            )
+            if len(images) == 6:
+                break
+    return {"status": "ok", "query": safe_query, "images": images}
+
+
+@tool(context=True)
+def web_image_search(query: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Find a small set of relevant web images to show as visual examples in chat."""
+    result = _run_web_image_search(query)
+    if result.get("status") == "ok":
+        visual_results = tool_context.invocation_state.setdefault("visual_results", [])
+        visual_results.extend(result["images"][: max(0, 6 - len(visual_results))])
+    return result
+
+
 @tool(context=True)
 def walrus_remember_project_fact(fact: str, tool_context: ToolContext) -> dict[str, str]:
     """Remember a concise, explicit user-provided fact for the currently selected project."""
@@ -242,6 +364,38 @@ def walrus_remember_project_fact(fact: str, tool_context: ToolContext) -> dict[s
     return remember_project_fact(
         namespace if isinstance(namespace, str) else None,
         fact,
+    )
+
+
+@tool(context=True)
+def ask_user(
+    question: str,
+    question_type: Literal["clarification", "permission"],
+    options: list[str],
+    tool_context: ToolContext,
+) -> dict[str, Any]:
+    """Pause and ask the user a blocking clarification or permission question."""
+    question = question.strip()
+    if not question or len(question) > 1000:
+        return {"status": "invalid_question"}
+    if len(options) > 5 or any(not option.strip() or len(option) > 120 for option in options):
+        return {"status": "invalid_options"}
+
+    request_user_input = tool_context.invocation_state.get("request_user_input")
+    if not callable(request_user_input):
+        return {
+            "status": "unavailable",
+            "message": "Interactive questions require an active chat session.",
+        }
+
+    if question_type == "permission":
+        options = ["Allow once", "Do not allow"]
+    return request_user_input(
+        {
+            "question": question,
+            "question_type": question_type,
+            "options": options,
+        }
     )
 
 
@@ -297,13 +451,17 @@ def connected_mcp_clients(access_token: str | None = None) -> list[MCPClient]:
 def agent_tool_session(
     access_token: str | None = None,
     memory_enabled: bool = False,
+    interactive: bool = False,
 ) -> tuple[ExitStack, list[Any]]:
-    """Open configured research and read-only tools for an agent turn."""
+    """Open configured research tools and any available interactive tools."""
     stack = ExitStack()
     tools: list[Any] = [draft_document]
+    if interactive:
+        tools.append(ask_user)
     if memory_enabled:
         tools.append(walrus_remember_project_fact)
     tools.append(web_search)
+    tools.append(web_image_search)
     if settings.qloo_api_key:
         tools.extend([qloo_search_entities, qloo_cultural_affinities, qloo_agent_grounding])
     clients = connected_mcp_clients(access_token)

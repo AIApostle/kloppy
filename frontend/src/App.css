@@ -165,6 +165,17 @@ button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(-
 .full-page-chat .formatted-text ul,.full-page-chat .formatted-text ol{gap:7px;margin:10px 0}
 @media(max-width:460px){.chat-message.agent .formatted-text{padding:11px 12px;font-size:13px}.full-page-chat .chat-message.agent .formatted-text{padding:12px 13px;font-size:13px}}
 
+.chat-image-gallery{max-width:100%;margin-top:12px}
+.chat-image-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.chat-image-result{display:flex;min-width:0;flex-direction:column;overflow:hidden;color:var(--ink);border:1px solid var(--line);border-radius:5px;background:#fff;text-decoration:none}
+.chat-image-result:hover{border-color:#b9a99e;box-shadow:0 5px 14px #27302c12}
+.chat-image-result:focus-visible{outline:3px solid #e2675270;outline-offset:2px}
+.chat-image-result img{display:block;width:100%;aspect-ratio:4/3;object-fit:cover;background:#eae8e0}
+.chat-image-caption{display:grid;gap:5px;padding:8px 9px;font-size:11px;line-height:1.35}
+.chat-image-source{display:flex;align-items:center;gap:4px;color:var(--coral-dark);font-size:10px}
+.chat-image-unavailable{display:grid;min-height:100px;place-items:center;padding:12px;color:var(--ink-soft);background:#eae8e0;font-size:11px;text-align:center}
+.chat-image-disclaimer{margin:7px 0 0!important;padding:0!important;color:var(--ink-soft)!important;background:transparent!important;font-size:10px!important;line-height:1.45!important}
+
 /* Agent activity is a compact action log; it never includes model reasoning. */
 .activity-feed{max-width:580px;margin:12px 0 9px;padding-top:9px;border-top:1px solid #dcded6;color:#657169;font-size:10px;line-height:1.45}
 .activity-feed-head{display:flex;align-items:center;gap:6px;color:#53675a;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}

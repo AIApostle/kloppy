@@ -6,7 +6,6 @@ from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import httpx
 from docx import Document
 
 from app.services import agent_tools
@@ -63,9 +62,11 @@ class AgentToolTests(unittest.TestCase):
             self.assertIn(content, paragraphs)
 
     def test_web_search_returns_bounded_source_metadata(self) -> None:
-        response = httpx.Response(
-            200,
-            json={
+        with (
+            patch.object(agent_tools.settings, "tavily_api_key", "test-key"),
+            patch.object(agent_tools, "TavilyClient") as tavily_client,
+        ):
+            tavily_client.return_value.search.return_value = {
                 "results": [
                     {
                         "title": "Industry report",
@@ -74,22 +75,23 @@ class AgentToolTests(unittest.TestCase):
                         "published_date": "2026-01-15",
                     }
                 ]
-            },
-            request=httpx.Request("POST", "https://api.tavily.com/search"),
-        )
-        with (
-            patch.object(agent_tools.settings, "tavily_api_key", "test-key"),
-            patch.object(agent_tools.httpx, "post", return_value=response) as post,
-        ):
+            }
             result = agent_tools._run_web_search("  current campaign trends  ")
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["query"], "current campaign trends")
         self.assertEqual(result["sources"][0]["url"], "https://example.com/report")
         self.assertEqual(result["sources"][0]["snippet"], "Evidence from a published report.")
-        self.assertEqual(post.call_args.kwargs["headers"]["Authorization"], "Bearer test-key")
-        self.assertNotIn("api_key", post.call_args.kwargs["json"])
-        self.assertTrue(post.call_args.kwargs["json"]["include_published_date"])
+        tavily_client.assert_called_once_with(api_key="test-key")
+        tavily_client.return_value.search.assert_called_once_with(
+            "current campaign trends",
+            timeout=15,
+            search_depth="basic",
+            max_results=6,
+            include_answer=False,
+            include_raw_content=False,
+            include_published_date=True,
+        )
 
     def test_web_search_is_explicitly_unavailable_without_configuration(self) -> None:
         with patch.object(agent_tools.settings, "tavily_api_key", None):
@@ -98,6 +100,65 @@ class AgentToolTests(unittest.TestCase):
         self.assertEqual(result["status"], "unavailable")
         self.assertIn("not configured", result["message"])
         self.assertEqual(result["sources"] if "sources" in result else [], [])
+
+    def test_web_image_search_returns_safe_images_with_source_links(self) -> None:
+        with (
+            patch.object(agent_tools.settings, "tavily_api_key", "test-key"),
+            patch.object(agent_tools, "TavilyClient") as tavily_client,
+        ):
+            tavily_client.return_value.search.return_value = {
+                "images": [
+                    {
+                        "url": "https://cdn.example.com/image.jpg",
+                        "description": "A bright product display",
+                    },
+                    {"url": "javascript:alert(1)", "description": "Unsafe URL"},
+                ],
+                "results": [
+                    {
+                        "title": "Product display ideas",
+                        "url": "https://example.com/ideas",
+                        "images": [{"url": "https://cdn.example.com/image.jpg"}],
+                    }
+                ],
+            }
+            result = agent_tools._run_web_image_search("  product display examples  ")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["query"], "product display examples")
+        self.assertEqual(
+            result["images"],
+            [
+                {
+                    "url": "https://cdn.example.com/image.jpg",
+                    "description": "A bright product display",
+                    "source_title": "Product display ideas",
+                    "source_url": "https://example.com/ideas",
+                }
+            ],
+        )
+        tavily_client.assert_called_once_with(api_key="test-key")
+        self.assertTrue(tavily_client.return_value.search.call_args.kwargs["include_images"])
+        self.assertTrue(
+            tavily_client.return_value.search.call_args.kwargs["include_image_descriptions"]
+        )
+        self.assertTrue(tavily_client.return_value.search.call_args.kwargs["safe_search"])
+
+    def test_web_image_search_records_results_for_chat_response(self) -> None:
+        tool_function = agent_tools.web_image_search.__wrapped__
+        invocation_context = SimpleNamespace(invocation_state={})
+        with patch.object(
+            agent_tools,
+            "_run_web_image_search",
+            return_value={"status": "ok", "images": [{"url": "https://example.com/image.jpg"}]},
+        ):
+            result = tool_function("campaign examples", invocation_context)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(
+            invocation_context.invocation_state["visual_results"],
+            [{"url": "https://example.com/image.jpg"}],
+        )
 
     def test_web_search_tool_is_always_exposed(self) -> None:
         with (
@@ -109,6 +170,7 @@ class AgentToolTests(unittest.TestCase):
             stack.close()
 
         self.assertIn(agent_tools.web_search, tools)
+        self.assertIn(agent_tools.web_image_search, tools)
         self.assertIn(
             "only when current, external, or explicitly requested facts",
             agent_tools.web_search.__doc__,
@@ -123,6 +185,34 @@ class AgentToolTests(unittest.TestCase):
             stack, tools = agent_tools.agent_tool_session(memory_enabled=True)
             stack.close()
             self.assertIn(agent_tools.walrus_remember_project_fact, tools)
+
+    def test_interactive_question_tool_is_only_exposed_when_transport_can_pause(self) -> None:
+        with patch.object(agent_tools, "connected_mcp_clients", return_value=[]):
+            stack, tools = agent_tools.agent_tool_session(interactive=False)
+            stack.close()
+            self.assertNotIn(agent_tools.ask_user, tools)
+
+            stack, tools = agent_tools.agent_tool_session(interactive=True)
+            stack.close()
+            self.assertIn(agent_tools.ask_user, tools)
+
+    def test_permission_question_has_fixed_allow_or_decline_options(self) -> None:
+        tool_function = agent_tools.ask_user.__wrapped__
+        invocation_context = SimpleNamespace(
+            invocation_state={
+                "request_user_input": lambda question: question,
+            }
+        )
+
+        result = tool_function(
+            "May I create this HubSpot contact?",
+            "permission",
+            ["custom model-proposed option"],
+            invocation_context,
+        )
+
+        self.assertEqual(result["options"], ["Allow once", "Do not allow"])
+        self.assertEqual(result["question_type"], "permission")
 
     def test_project_memory_tool_uses_server_supplied_namespace(self) -> None:
         tool_function = agent_tools.walrus_remember_project_fact.__wrapped__

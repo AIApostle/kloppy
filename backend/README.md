@@ -67,14 +67,23 @@ Qloo credentials stay on the backend; the browser never receives the key.
 ## Agent web research and campaign documents
 
 Set `TAVILY_API_KEY` in the backend environment to enable Kloppy's built-in
-web-search tool. The tool is available to the agent on every turn, but prompt
-instructions restrict its use to requests needing current, specialized, or
-explicitly requested web research. Search results include source titles, URLs,
-snippets, and publication dates when provided; Kloppy cites only sources
-returned by the search. Without this key, the tool reports that search is
-unavailable. Keep the key server-side and out of frontend configuration. The
-integration follows the [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
-using its bearer-token authorization header.
+web-search and web-image-search tools. The key is required: create one in the
+[Tavily dashboard](https://app.tavily.com), then configure it as `TAVILY_API_KEY`
+in the backend's local environment and deployed API environment (for example,
+Render). Keep it server-side and out of frontend configuration. Without this
+key, both tools report that search is unavailable.
+
+The backend uses Tavily's official `tavily-python` SDK. Web search is available
+to the agent on every turn, but prompt instructions restrict it to requests
+needing current, specialized, or explicitly requested research. Results include
+source titles, URLs, snippets, and publication dates when provided. Image search
+uses Tavily's `include_images` and `include_image_descriptions` options and
+returns a small set of attributed visual examples in chat when the user asks
+for images or references. The images remain third-party content; links lead to
+their source pages where available. See the
+[Tavily Python SDK quickstart](https://docs.tavily.com/sdk/python/quick-start),
+[SDK reference](https://docs.tavily.com/sdk/python/reference), and
+[Search API reference](https://docs.tavily.com/documentation/api-reference/endpoint/search).
 
 Substantial campaign deliverables are generated as `.docx` Word documents.
 Each includes Overview, Audience, Strategy, and Launch & Learn, and the

@@ -1,9 +1,12 @@
 """Agent conversation transport routes."""
 
 import asyncio
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 import logging
 import time
+from threading import Event, Lock
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -17,6 +20,7 @@ from ..services.user_settings import SettingsAuthenticationError, SettingsStoreE
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 agent_service = StrandsAgentService()
 logger = logging.getLogger("kloppy.api.websocket")
+QUESTION_TIMEOUT_SECONDS = 300
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -131,31 +135,12 @@ async def _serve_chat_socket(websocket: WebSocket, request_id: str) -> None:
                 await websocket.send_json(
                     {"type": "activity", "status": "working", "label": "Connecting campaign context and available tools"}
                 )
-                loop = asyncio.get_running_loop()
-                activity_queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
-
-                def forward_activity(event: dict[str, str]) -> None:
-                    loop.call_soon_threadsafe(activity_queue.put_nowait, event)
-
-                response_task = asyncio.create_task(
-                    asyncio.to_thread(
-                        agent_service.respond,
-                        payload,
-                        user_settings,
-                        forward_activity,
-                        token,
-                        context_sources(token),
-                    )
+                response, stopped = await _run_agent_turn(
+                    websocket,
+                    payload,
+                    user_settings,
+                    token,
                 )
-                while not response_task.done():
-                    try:
-                        event = await asyncio.wait_for(activity_queue.get(), timeout=0.25)
-                        await websocket.send_json({"type": "activity", **event})
-                    except TimeoutError:
-                        continue
-                while not activity_queue.empty():
-                    await websocket.send_json({"type": "activity", **activity_queue.get_nowait()})
-                response = await response_task
             except SettingsAuthenticationError as error:
                 logger.warning("websocket_turn_failed request_id=%s error_type=%s", request_id, type(error).__name__)
                 await websocket.send_json({"type": "response", "error": str(error), "error_code": "authentication_required"})
@@ -169,6 +154,12 @@ async def _serve_chat_socket(websocket: WebSocket, request_id: str) -> None:
                 logger.error("websocket_turn_failed request_id=%s error_type=%s", request_id, type(error).__name__)
                 await websocket.send_json({"type": "response", "error": str(error)})
                 continue
+            if stopped:
+                await websocket.send_json({"type": "stopped"})
+                logger.info("websocket_turn_stopped request_id=%s", request_id)
+                continue
+            if response is None:
+                raise AgentProviderError("The agent ended without a response.")
             await websocket.send_json({"type": "response", **response.model_dump()})
             logger.info(
                 "websocket_turn_completed request_id=%s duration_ms=%.1f",
@@ -178,3 +169,134 @@ async def _serve_chat_socket(websocket: WebSocket, request_id: str) -> None:
     except WebSocketDisconnect:
         logger.info("websocket_connection_closed request_id=%s", request_id)
         return
+
+
+async def _run_agent_turn(
+    websocket: WebSocket,
+    payload: ChatRequest,
+    user_settings: dict[str, Any],
+    token: str,
+) -> tuple[ChatResponse | None, bool]:
+    loop = asyncio.get_running_loop()
+    events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    cancel_signal = Event()
+    questions: dict[str, Future[dict[str, Any]]] = {}
+    question_lock = Lock()
+
+    def queue_event(event: dict[str, Any]) -> None:
+        loop.call_soon_threadsafe(events.put_nowait, event)
+
+    def forward_activity(event: dict[str, str]) -> None:
+        queue_event({"type": "activity", **event})
+
+    def request_user_input(question: dict[str, Any]) -> dict[str, Any]:
+        question_id = uuid.uuid4().hex
+        result: Future[dict[str, Any]] = Future()
+        with question_lock:
+            questions[question_id] = result
+        queue_event({"type": "question", "question_id": question_id, **question, "_future": result})
+        try:
+            return result.result(timeout=QUESTION_TIMEOUT_SECONDS)
+        except FutureTimeoutError:
+            return {"status": "timed_out"}
+        finally:
+            with question_lock:
+                questions.pop(question_id, None)
+
+    response_task = asyncio.create_task(
+        asyncio.to_thread(
+            agent_service.respond,
+            payload,
+            user_settings,
+            forward_activity,
+            token,
+            context_sources(token),
+            request_user_input=request_user_input,
+            cancel_signal=cancel_signal,
+        )
+    )
+    receive_task = asyncio.create_task(websocket.receive_json())
+    event_task = asyncio.create_task(events.get())
+    stopped = False
+
+    def resolve_open_questions(result: dict[str, Any]) -> None:
+        with question_lock:
+            pending = list(questions.values())
+        for future in pending:
+            if not future.done():
+                future.set_result(result)
+
+    try:
+        while not response_task.done():
+            done, _ = await asyncio.wait(
+                {response_task, receive_task, event_task},
+                timeout=0.25,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if receive_task in done:
+                frame = receive_task.result()
+                if isinstance(frame, dict) and frame.get("type") == "answer":
+                    question_id = frame.get("question_id")
+                    with question_lock:
+                        result = questions.get(question_id) if isinstance(question_id, str) else None
+                    if result and not result.done():
+                        if frame.get("cancelled") is True:
+                            result.set_result({"status": "cancelled"})
+                        elif frame.get("approved") is not None:
+                            if isinstance(frame.get("approved"), bool):
+                                result.set_result(
+                                    {
+                                        "status": "answered",
+                                        "approved": frame["approved"],
+                                        "answer": "Allow once" if frame["approved"] else "Do not allow",
+                                    }
+                                )
+                        else:
+                            answer = frame.get("answer")
+                            if isinstance(answer, str) and answer.strip() and len(answer) <= 2000:
+                                result.set_result({"status": "answered", "answer": answer.strip()})
+                elif isinstance(frame, dict) and frame.get("type") == "cancel":
+                    stopped = True
+                    cancel_signal.set()
+                    resolve_open_questions({"status": "cancelled"})
+                    await websocket.send_json(
+                        {"type": "activity", "status": "waiting", "label": "Stopping your response"}
+                    )
+                receive_task = asyncio.create_task(websocket.receive_json())
+
+            if event_task in done:
+                event = event_task.result()
+                future = event.pop("_future", None)
+                if event.get("type") == "question":
+                    question_id = event.get("question_id")
+                    if isinstance(question_id, str) and isinstance(future, Future):
+                        with question_lock:
+                            questions[question_id] = future
+                    if stopped:
+                        if isinstance(future, Future) and not future.done():
+                            future.set_result({"status": "cancelled"})
+                        event_task = asyncio.create_task(events.get())
+                        continue
+                await websocket.send_json(event)
+                event_task = asyncio.create_task(events.get())
+
+        while not events.empty():
+            event = events.get_nowait()
+            event.pop("_future", None)
+            await websocket.send_json(event)
+
+        if stopped:
+            return None, True
+        return await response_task, False
+    finally:
+        if not response_task.done():
+            cancel_signal.set()
+            resolve_open_questions({"status": "cancelled"})
+            try:
+                await asyncio.wait_for(asyncio.shield(response_task), timeout=10)
+            except TimeoutError:
+                logger.warning("websocket_agent_shutdown_timeout")
+            except Exception as error:
+                logger.warning("websocket_agent_shutdown_failed error_type=%s", type(error).__name__)
+        for task in (receive_task, event_task):
+            task.cancel()

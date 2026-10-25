@@ -210,6 +210,14 @@ class WalrusMemoryTests(unittest.TestCase):
         self.assertIn("walrus_remember_project_fact", BASE_PROMPT)
         self.assertIn("project's namespace", BASE_PROMPT)
 
+    def test_agent_prompt_requires_popup_tool_for_questions_needing_a_reply(self) -> None:
+        self.assertIn("use the available `ask_user` tool", BASE_PROMPT)
+        self.assertIn(
+            "Do not ask a question that requires a response only in ordinary chat text",
+            BASE_PROMPT,
+        )
+        self.assertIn('question_type="permission"', BASE_PROMPT)
+
 
 if __name__ == "__main__":
     unittest.main()
