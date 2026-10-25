@@ -4,7 +4,7 @@ import './App.css'
 type Page = 'chat' | 'campaigns' | 'knowledge' | 'integrations' | 'settings' | 'campaign-chat' | 'overview' | 'audience' | 'strategy' | 'launch'
 type AuthMode = 'login' | 'signup'
 type UserSettings = { name: string; workspace: string; digest_enabled: boolean; permission_policy: 'ask' | 'auto' }
-type IconName = 'activity' | 'arrow' | 'brief' | 'campaigns' | 'chevron' | 'creative' | 'dots' | 'insights' | 'plus' | 'search' | 'settings' | 'spark' | 'strategy' | 'trend' | 'send' | 'lock' | 'check' | 'play' | 'book' | 'collapse' | 'external' | 'plug' | 'file' | 'eye' | 'eyeOff' | 'logout' | 'user'
+type IconName = 'activity' | 'arrow' | 'brief' | 'campaigns' | 'chevron' | 'creative' | 'dots' | 'insights' | 'plus' | 'search' | 'settings' | 'spark' | 'strategy' | 'trend' | 'send' | 'lock' | 'check' | 'play' | 'book' | 'collapse' | 'external' | 'plug' | 'file' | 'eye' | 'eyeOff' | 'logout' | 'user' | 'copy' | 'edit' | 'stop'
 
 const HOSTED_API_URL = 'https://kloppy-dd2u.onrender.com/api'
 const API_PROBE_TIMEOUT_MS = 2500
@@ -142,6 +142,9 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     eyeOff: <><path d="m3 3 18 18M10.6 6.2A10.8 10.8 0 0 1 12 6c6.3 0 9.5 6 9.5 6a15.6 15.6 0 0 1-3 3.6M6.2 6.2C3.8 7.7 2.5 12 2.5 12s3.2 6 9.5 6c.8 0 1.6-.1 2.3-.3" /><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" /></>,
     logout: <><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>,
     user: <><circle cx="12" cy="8" r="3.4" /><path d="M5 20a7 7 0 0 1 14 0" /></>,
+    copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></>,
+    edit: <><path d="m4 16.5-.8 4.3 4.3-.8L19 8.5 15.5 5 4 16.5Z" /><path d="m13.8 6.7 3.5 3.5" /></>,
+    stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   }
   return <svg {...common}>{paths[name]}</svg>
 }
@@ -291,7 +294,71 @@ type AgentActivity = { label: string; status: string; tool?: string }
 type CampaignSections = Partial<Record<'overview' | 'audience' | 'strategy' | 'launch', string>>
 type DocumentArtifact = { title: string; content: string; format?: string; filename?: string; docx_base64?: string; sections?: CampaignSections }
 type ChatMessage = { role: 'agent' | 'user'; text: string; artifact?: DocumentArtifact; activities?: AgentActivity[] }
+type AgentQuestion = { question_id: string; question: string; question_type: 'clarification' | 'permission'; options: string[] }
 type Campaign = { id: string; name: string; createdAt: string }
+
+function AgentQuestionDialog({
+  question,
+  onAnswer,
+  onCancel,
+}: {
+  question: AgentQuestion
+  onAnswer: (answer: string, approved?: boolean) => void
+  onCancel: () => void
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const [selectedOption, setSelectedOption] = useState('')
+  const [answer, setAnswer] = useState('')
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (dialog && !dialog.open) dialog.showModal()
+    return () => {
+      if (dialog?.open) dialog.close()
+    }
+  }, [question.question_id])
+
+  const submitAnswer = (event: FormEvent) => {
+    event.preventDefault()
+    const value = answer.trim() || selectedOption
+    if (value) onAnswer(value)
+  }
+
+  return <dialog
+    ref={dialogRef}
+    className="agent-question-dialog"
+    aria-labelledby="agent-question-title"
+    aria-describedby="agent-question-description"
+    onCancel={(event) => { event.preventDefault(); onCancel() }}
+  >
+    <form onSubmit={submitAnswer}>
+      <div className={`agent-question-symbol ${question.question_type}`}><Icon name={question.question_type === 'permission' ? 'lock' : 'spark'} size={19} /></div>
+      <h2 id="agent-question-title">{question.question_type === 'permission' ? 'Permission needed' : 'A quick question'}</h2>
+      <p id="agent-question-description" className="agent-question-prompt">{question.question}</p>
+      {question.question_type === 'permission'
+        ? <div className="agent-question-actions">
+          <button className="button primary" type="button" onClick={() => onAnswer('Allow once', true)}>Allow once <Icon name="check" size={15} /></button>
+          <button className="button secondary" type="button" onClick={() => onAnswer('Do not allow', false)}>Don’t allow</button>
+        </div>
+        : <>
+          {question.options.length > 0 && <fieldset className="agent-question-options">
+            <legend>Choose an answer</legend>
+            {question.options.map((option) => <label key={option} className={selectedOption === option ? 'selected' : ''}>
+              <input type="radio" name={`question-${question.question_id}`} value={option} checked={selectedOption === option} onChange={() => setSelectedOption(option)} />
+              <span>{option}</span>
+            </label>)}
+          </fieldset>}
+          <label className="agent-question-answer-label" htmlFor={`agent-question-answer-${question.question_id}`}>{question.options.length ? 'Or add a different answer' : 'Your answer'}</label>
+          <textarea id={`agent-question-answer-${question.question_id}`} autoFocus value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer…" rows={3} maxLength={2000} />
+          <div className="agent-question-actions">
+            <button className="button secondary" type="button" onClick={onCancel}>Cancel</button>
+            <button className="button primary" type="submit" disabled={!answer.trim() && !selectedOption}>Send answer <Icon name="arrow" size={14} /></button>
+          </div>
+        </>}
+      <p className="agent-question-wait-note">Kloppy is paused until you respond.</p>
+    </form>
+  </dialog>
+}
 
 function campaignSectionsKey(campaignId: string) {
   return `kloppy-campaign-sections:${accountKey()}:${campaignId}`
@@ -347,7 +414,13 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
   const [spinOffOpen, setSpinOffOpen] = useState(false)
   const [spinOffName, setSpinOffName] = useState('')
   const [menuOpen, setMenuOpen] = useState(false); const [files, setFiles] = useState<string[]>([]); const [contextItems, setContextItems] = useState<string[]>([]); const [viewer, setViewer] = useState<ChatMessage['artifact']>(undefined); const [socket, setSocket] = useState<WebSocket | null>(null); const [activities, setActivities] = useState<AgentActivity[]>([])
+  const [question, setQuestion] = useState<AgentQuestion | null>(null)
+  const [stopping, setStopping] = useState(false)
+  const [editingIndex, setEditingIndex] = useState<number | null>(null)
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+  const [copyError, setCopyError] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const socketRef = useRef<WebSocket | null>(null)
 
   useEffect(() => { if (historyKey) localStorage.setItem(historyKey, JSON.stringify(messages)) }, [historyKey, messages])
 
@@ -374,10 +447,28 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
         const websocketBase = apiBaseUrl.replace(/^http/, 'ws').replace(/\/$/, '')
         const nextConnection = new WebSocket(`${websocketBase}/assistant/ws`)
         connection = nextConnection
+        socketRef.current = nextConnection
         nextConnection.onmessage = (event) => {
-          const data = JSON.parse(event.data) as { type?: string; reply?: string; error?: string; error_code?: string; artifact?: DocumentArtifact; activities?: AgentActivity[]; label?: string; status?: string; tool?: string }
+          const data = JSON.parse(event.data) as { type?: string; reply?: string; error?: string; error_code?: string; artifact?: DocumentArtifact; activities?: AgentActivity[]; label?: string; status?: string; tool?: string; question_id?: string; question?: string; question_type?: AgentQuestion['question_type']; options?: string[] }
+          if (data.type === 'question' && data.question_id && data.question && data.question_type) {
+            setQuestion({
+              question_id: data.question_id,
+              question: data.question,
+              question_type: data.question_type,
+              options: data.options ?? [],
+            })
+            setActivities((items) => [...items.filter((item) => item.status !== 'waiting'), { label: 'Waiting for your answer', status: 'waiting' }])
+            return
+          }
           if (data.type === 'activity') {
             setActivities((items) => [...items, { label: data.label ?? 'Working on your request', status: data.status ?? 'working', tool: data.tool }])
+            return
+          }
+          if (data.type === 'stopped') {
+            setQuestion(null)
+            setBusy(false)
+            setStopping(false)
+            setActivities([])
             return
           }
           const lowerError = data.error?.toLowerCase() ?? ''
@@ -395,6 +486,8 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
             setViewer(data.artifact)
             if (campaignId && data.artifact.sections) onCampaignSections?.(campaignId, data.artifact.sections)
           }
+          setQuestion(null)
+          setStopping(false)
           setActivities([])
           setBusy(false)
         }
@@ -404,48 +497,92 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
         }
         nextConnection.onclose = () => {
           if (apiBaseCache?.url === apiBaseUrl) apiBaseCache = null
-          setSocket(null)
+          socketRef.current = null
+          if (active) {
+            setSocket(null)
+            setQuestion(null)
+            setBusy(false)
+            setStopping(false)
+            setActivities([])
+          }
         }
       })
       .catch(() => setSocket(null))
     return () => {
       active = false
       connection?.close()
+      socketRef.current = null
     }
   }, [])
 
   const send = async (value = input) => {
     if (!value.trim() || busy) return
-    const conversation_history = messages.slice(-16).map((message) => ({
+    const editedIndex = editingIndex
+    const contextMessages = editedIndex === null ? messages.slice(-16) : messages.slice(0, editedIndex)
+    const conversation_history = contextMessages.slice(-16).map((message) => ({
       role: message.role === 'agent' ? 'assistant' as const : 'user' as const,
       content: message.text,
     }))
     const payload = { message: value, attachments: files, context_items: contextItems, conversation_history, campaign_id: campaignId, campaign_name: campaignName, campaign_sections: campaignId ? campaignSections ?? {} : undefined }
-    setMessages((items) => [...items, { role: 'user', text: value }]); setInput(''); setBusy(true); setActivities([{ label: 'Connecting campaign context and available tools', status: 'working' }])
-    if (socket?.readyState === WebSocket.OPEN) { socket.send(JSON.stringify(payload)); return }
+    setMessages((items) => editedIndex === null ? [...items, { role: 'user', text: value }] : [...items.slice(0, editedIndex), { role: 'user', text: value }])
+    setInput(''); setEditingIndex(null); setBusy(true); setStopping(false); setActivities([{ label: 'Connecting campaign context and available tools', status: 'working' }])
     try {
-      const data = await request<{ reply: string; artifact?: DocumentArtifact; activities?: AgentActivity[] }>('/assistant/chat', { method: 'POST', body: JSON.stringify(payload) })
-      setMessages((items) => [...items, { role: 'agent', text: data.reply, artifact: data.artifact, activities: data.activities }])
-      if (data.artifact) {
-        setViewer(data.artifact)
-        if (campaignId && data.artifact.sections) onCampaignSections?.(campaignId, data.artifact.sections)
+      const deadline = Date.now() + 8000
+      let connection: WebSocket | null = null
+      while (Date.now() < deadline) {
+        const candidate = socketRef.current
+        if (candidate?.readyState === WebSocket.OPEN) { connection = candidate; break }
+        if (candidate?.readyState === WebSocket.CLOSED) break
+        await new Promise((resolve) => window.setTimeout(resolve, 100))
       }
+      if (!connection) throw new ApiConnectionError('The live chat connection is not ready. Check the backend connection and try again.')
+      connection.send(JSON.stringify(payload))
     } catch (error) {
-      const detail = error instanceof Error ? error.message : ''
-      const lower = detail.toLowerCase()
-      const message = lower.includes('schema cache') || lower.includes('user_settings')
-        ? 'Kloppy can’t access your saved workspace settings yet. Please try again in a moment.'
-        : lower.includes('authentication')
-          ? 'Your session has expired. Sign in again to continue.'
-          : lower.includes('not configured')
-            ? 'Kloppy’s assistant is not available yet. Please try again in a moment.'
-            : error instanceof ApiConnectionError || error instanceof ApiRequestError
-              ? detail
-              : 'I couldn’t reach the campaign service just now. Please try again in a moment.'
-      setMessages((items) => [...items, { role: 'agent', text: message }])
-    } finally {
+      setMessages((items) => [...items, { role: 'agent', text: error instanceof Error ? error.message : 'Could not send the message. Try again.' }])
       setBusy(false)
       setActivities([])
+    }
+  }
+
+  const answerQuestion = (answer: string, approved?: boolean) => {
+    if (!question || socketRef.current?.readyState !== WebSocket.OPEN) return
+    socketRef.current.send(JSON.stringify({
+      type: 'answer',
+      question_id: question.question_id,
+      answer,
+      approved,
+    }))
+    setQuestion(null)
+    setActivities((items) => [...items.filter((item) => item.status !== 'waiting'), { label: 'Continuing with your answer', status: 'working' }])
+  }
+
+  const cancelQuestion = () => {
+    if (!question || socketRef.current?.readyState !== WebSocket.OPEN) return
+    socketRef.current.send(JSON.stringify({ type: 'answer', question_id: question.question_id, cancelled: true }))
+    setQuestion(null)
+    setActivities((items) => [...items.filter((item) => item.status !== 'waiting'), { label: 'Continuing without that answer', status: 'working' }])
+  }
+
+  const stopResponse = () => {
+    if (socketRef.current?.readyState !== WebSocket.OPEN || stopping) return
+    setStopping(true)
+    socketRef.current.send(JSON.stringify({ type: 'cancel' }))
+  }
+
+  const editMessage = (index: number, text: string) => {
+    setEditingIndex(index)
+    setInput(text)
+    inputRef.current?.focus()
+  }
+
+  const copyReply = async (index: number, text: string) => {
+    setCopyError('')
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedIndex(index)
+      window.setTimeout(() => setCopiedIndex((current) => current === index ? null : current), 1800)
+    } catch {
+      setCopyError('Clipboard access is unavailable. Select the reply text and copy it manually.')
     }
   }
 
@@ -486,13 +623,15 @@ function Assistant({ fullPage = false, campaignId, campaignName, campaignSection
   return <aside className={`assistant-panel ${fullPage ? 'full-page-chat' : ''}`}>
     <div className="assistant-head"><div><h2>What should we make true?</h2><span className="assistant-runtime"><span className="live-dot" /> {socket ? 'Connected' : 'Ready for a message'}</span></div><button className="more-button" aria-label="Assistant options"><Icon name="dots" /></button></div>
     {messages.length === 0 && fullPage && <section className="chat-empty-state" aria-labelledby="chat-empty-title"><span className="chat-empty-mark"><KloppyMark /></span><h1 id="chat-empty-title">{campaignId ? `What would you like to make true for ${campaignName}?` : 'What are you launching?'}</h1><p>{campaignId ? 'Share the outcome you want from this campaign. Kloppy will keep the conversation, research, and drafts in this campaign’s workspace.' : 'Tell Kloppy about the product, the people you want to reach, or the result you want to create. We’ll shape the next move together.'}</p><div className="chat-starters" aria-label="Suggested starting points">{(campaignId ? ['Shape the campaign brief', 'Find the right audience', 'Draft launch messaging'] : ['We’re launching a new product', 'Help me find the right audience', 'Shape a campaign from my brief']).map((prompt) => <button type="button" key={prompt} onClick={() => { setInput(prompt); inputRef.current?.focus() }}>{prompt}<Icon name="arrow" size={14} /></button>)}</div></section>}
-    <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div>{message.role === 'agent' ? <FormattedText text={message.text} /> : <p>{message.text}</p>}{message.activities && <ActivityFeed events={message.activities} />}{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><div><ActivityFeed events={activities} live /><p className="working-copy">Kloppy is preparing your response.</p></div></div>}</div>
+    <div className="chat-thread">{messages.map((message, index) => <div className={`chat-message ${message.role}`} key={`${message.text}-${index}`}><span className="chat-avatar">{message.role === 'agent' ? <KloppyMark /> : 'AK'}</span><div className="chat-message-content">{message.role === 'agent' ? <FormattedText text={message.text} /> : <p>{message.text}</p>}{message.activities && <ActivityFeed events={message.activities} />}{message.artifact && <button className="artifact-link" onClick={() => setViewer(message.artifact)}><Icon name="file" size={14} /> View {message.artifact.title}</button>}<div className="chat-message-tools">{message.role === 'agent' ? <button type="button" onClick={() => void copyReply(index, message.text)} aria-label={copiedIndex === index ? 'Copied response' : 'Copy response'}><Icon name="copy" size={13} /> {copiedIndex === index ? 'Copied' : 'Copy'}</button> : <button type="button" disabled={busy} onClick={() => editMessage(index, message.text)} aria-label="Edit message"><Icon name="edit" size={13} /> Edit</button>}</div>{copyError && message.role === 'agent' && <p className="chat-copy-error" role="status">{copyError}</p>}</div></div>)}{busy && <div className="chat-message agent"><span className="chat-avatar"><KloppyMark /></span><div><ActivityFeed events={activities} live /><p className="working-copy">{question ? 'Waiting for your answer…' : stopping ? 'Stopping your response…' : 'Kloppy is preparing your response.'}</p></div></div>}</div>
     {!campaignId && userHasSpoken && <div className="conversation-actions"><button type="button" className="text-button" onClick={startSpinOff}><Icon name="plus" size={14} /> Spin off as a campaign</button>{spinOffOpen && <form onSubmit={(event) => { event.preventDefault(); if (spinOffName.trim()) onSpinOffCampaign?.(spinOffName.trim(), messages) }}><input aria-label="New campaign name" autoFocus value={spinOffName} onChange={(event) => setSpinOffName(event.target.value)} placeholder="Name this campaign" maxLength={200} required /><button className="button primary" type="submit"><Icon name="arrow" size={14} /> Create campaign</button><button type="button" className="text-button" onClick={() => setSpinOffOpen(false)}>Cancel</button></form>}</div>}
     {(files.length > 0 || contextItems.length > 0) && <div className="composer-context">{[...files, ...contextItems].map((item) => <span key={item}><Icon name={files.includes(item) ? 'file' : 'book'} size={12} /> {item}<button onClick={() => files.includes(item) ? setFiles((items) => items.filter((entry) => entry !== item)) : setContextItems((items) => items.filter((entry) => entry !== item))} aria-label={`Remove ${item}`}>×</button></span>)}</div>}
     {menuOpen && <div className="composer-menu"><label className="menu-action"><Icon name="file" size={15} /> Add files<input type="file" multiple onChange={addFile} /></label><button className={contextItems.includes('Brand knowledge') ? 'selected' : ''} onClick={() => addContext('Brand knowledge')}><Icon name="book" size={15} /> Brand knowledge</button><button className={contextItems.includes('Campaign skills') ? 'selected' : ''} onClick={() => addContext('Campaign skills')}><Icon name="spark" size={15} /> Campaign skills</button></div>}
-    <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}><div className="composer-main"><button type="button" className={`composer-plus ${menuOpen ? 'active' : ''}`} aria-label="Add files, knowledge, or skills" onClick={() => setMenuOpen(!menuOpen)}><Icon name="plus" size={18} /></button><textarea ref={inputRef} aria-label="Ask Kloppy" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} placeholder="Ask Kloppy…" rows={1} /><button type="submit" className="composer-send" aria-label="Send message" disabled={!input.trim() || busy}><Icon name="send" size={17} /></button></div><div className="composer-controls"><label className="composer-select"><Icon name="lock" size={13} /><select aria-label="Permission policy" value={permission} onChange={(e) => void savePermissionPolicy(e.target.value as PermissionPolicy)}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label></div></form>
+    {editingIndex !== null && <div className="chat-editing-banner"><span>Editing your message. Later replies will be regenerated.</span><button type="button" className="text-button" onClick={() => { setEditingIndex(null); setInput('') }}>Cancel edit</button></div>}
+    <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}><div className="composer-main"><button type="button" className={`composer-plus ${menuOpen ? 'active' : ''}`} aria-label="Add files, knowledge, or skills" onClick={() => setMenuOpen(!menuOpen)}><Icon name="plus" size={18} /></button><textarea ref={inputRef} aria-label={editingIndex === null ? 'Ask Kloppy' : 'Edit your message'} value={input} onChange={(e) => setInput(e.target.value)} disabled={busy} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} placeholder="Ask Kloppy…" rows={1} /><button type={busy ? 'button' : 'submit'} className={`composer-send ${busy ? 'composer-stop' : ''}`} aria-label={busy ? stopping ? 'Stopping response' : 'Stop response' : editingIndex === null ? 'Send message' : 'Update and regenerate'} disabled={busy ? stopping || !socket : !input.trim()} onClick={busy ? stopResponse : undefined}>{busy ? stopping ? <span className="stop-pending">…</span> : <Icon name="stop" size={16} /> : editingIndex === null ? <Icon name="send" size={17} /> : <Icon name="arrow" size={17} />}</button></div><div className="composer-controls"><label className="composer-select"><Icon name="lock" size={13} /><select aria-label="Permission policy" value={permission} onChange={(e) => void savePermissionPolicy(e.target.value as PermissionPolicy)}><option value="ask">Ask before actions</option><option value="auto">Auto-run drafts</option></select></label></div></form>
     <span className="assistant-note">{permissionSaveError || (permission === 'ask' ? 'Kloppy checks your saved settings and asks before consequential actions.' : 'Drafts may run automatically; publishing and spend still require your explicit approval.')}</span>
     {viewer && <div className="artifact-viewer" role="dialog" aria-modal="true" aria-labelledby="artifact-title"><div className="artifact-head"><div><span className="eyebrow">{viewer.format === 'docx' ? 'Word document · ready to review' : 'Document draft · ready to review'}</span><h3 id="artifact-title">{viewer.title}</h3></div><div className="artifact-actions"><button className="button secondary" onClick={() => downloadArtifact(viewer)}><Icon name="file" size={14} /> Download {viewer.format === 'docx' ? '.docx' : 'document'}</button><button className="more-button" aria-label="Close document" onClick={() => setViewer(undefined)}>×</button></div></div><div className="document-preview">{viewer.sections ? Object.entries({ overview: 'Overview', audience: 'Audience', strategy: 'Strategy', launch: 'Launch & Learn' } as const).map(([key, heading]) => <section key={key}><h2>{heading}</h2>{viewer.sections?.[key as keyof CampaignSections] && <FormattedText text={viewer.sections[key as keyof CampaignSections]!} />}</section>) : <FormattedText text={viewer.content} />}</div></div>}
+    {question && <AgentQuestionDialog question={question} onAnswer={answerQuestion} onCancel={cancelQuestion} />}
   </aside>
 }
 
